@@ -77,12 +77,28 @@
     speak(currentQ);
   }
 
+  let voicesReady = false;
+  if ('speechSynthesis' in window) {
+    const load = () => { if (window.speechSynthesis.getVoices().length) voicesReady = true; };
+    load();
+    window.speechSynthesis.onvoiceschanged = load;
+  }
   function speak(text) {
     if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1; u.pitch = 1;
-    window.speechSynthesis.speak(u);
+    const synth = window.speechSynthesis;
+    synth.cancel();                              // clear any queued speech
+    const utter = () => {
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1; u.pitch = 1; u.volume = 1; u.lang = 'en-US';
+      const v = synth.getVoices().find(x => /en[-_]/i.test(x.lang));
+      if (v) u.voice = v;
+      synth.speak(u);
+      // Chrome sometimes pauses synthesis; nudge it
+      setTimeout(() => { try { synth.resume(); } catch {} }, 250);
+    };
+    // speak() right after cancel() can be dropped in Chrome — give it a tick
+    if (voicesReady) setTimeout(utter, 120);
+    else setTimeout(() => { voicesReady = true; utter(); }, 350);
   }
 
   /* ---------- Speech recognition (answers) ---------- */
@@ -107,14 +123,16 @@
         }
         $('iv-transcript').textContent = (answerBuf + interim).trim();
       };
-      recog.onerror = () => {};
-      recog.onend = () => { if (listening) { try { recog.start(); } catch {} } };
-      try { recog.start(); } catch {}
+      recog.onerror = (e) => {
+        // network / not-allowed / service-not-allowed -> let them type instead
+        if (['not-allowed', 'service-not-allowed', 'network', 'audio-capture'].includes(e.error)) {
+          enableTypeFallback('Speech recognition unavailable (' + e.error + '). Type your answer here.');
+        }
+      };
+      recog.onend = () => { if (listening && !$('iv-transcript').dataset.fallback) { try { recog.start(); } catch {} } };
+      try { recog.start(); } catch { enableTypeFallback('Type your answer here.'); }
     } else {
-      // fallback: editable transcript
-      $('iv-transcript').contentEditable = 'true';
-      $('iv-transcript').focus();
-      $('iv-transcript').dataset.fallback = '1';
+      enableTypeFallback('Voice typing not supported in this browser — type your answer here.');
     }
     listening = true;
     $('iv-answer').textContent = '⏹ Stop answering';
@@ -129,6 +147,16 @@
     $('iv-answer').classList.remove('recording');
     const secs = (performance.now() - answerStart) / 1000;
     speakStats.totalSec += secs;
+  }
+
+  function enableTypeFallback(msg) {
+    if (recog) { try { recog.stop(); } catch {} recog = null; }
+    const box = $('iv-transcript');
+    box.dataset.fallback = '1';
+    box.contentEditable = 'true';
+    if (!box.textContent.trim()) box.setAttribute('data-placeholder', msg || 'Type your answer here.');
+    box.focus();
+    $('iv-transcript-label') && ($('iv-transcript-label').textContent = '');
   }
 
   function currentAnswerText() {
@@ -208,18 +236,30 @@
     });
   }
 
+  const num = (v) => { const n = Number(String(v).replace(/[^\d.]/g, '')); return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null; };
+  const toArr = (x) => Array.isArray(x) ? x : (x ? [x] : []);
+
   function renderReport(d, metrics) {
-    const s = d.scores || {};
     const names = {
       technical: 'Technical', communication: 'Communication', fluency: 'Fluency',
       roleFit: 'Role Fit', companyFit: 'Company Fit', problemSolving: 'Problem Solving'
     };
-    const verdictClass = /no hire/i.test(d.verdict) ? 'bad' : /lean/i.test(d.verdict) ? 'mid' : 'good';
+    // normalize scores -> numbers
+    const s = {};
+    Object.keys(names).forEach(k => { s[k] = num(d.scores?.[k]) ?? 0; });
+    // overall: use numeric field if it really is a number, else average the scores
+    let overall = num(d.overall);
+    if (overall == null) {
+      const vals = Object.values(s);
+      overall = Math.round(vals.reduce((a, b) => a + b, 0) / (vals.length || 1));
+    }
+    const verdict = (typeof d.verdict === 'string' && d.verdict) || (overall >= 75 ? 'Hire' : overall >= 55 ? 'Lean Hire' : 'No Hire');
+    const verdictClass = /no hire/i.test(verdict) ? 'bad' : /lean/i.test(verdict) ? 'mid' : 'good';
     let html = `
       <div class="iv-overall">
-        <div class="iv-score-ring ${verdictClass}"><span ${d.overall!=null?`data-count="${d.overall}"`:''}>${d.overall ?? '–'}</span><small>/100</small></div>
+        <div class="iv-score-ring ${verdictClass}"><span data-count="${overall}">0</span><small>/100</small></div>
         <div>
-          <div class="iv-verdict ${verdictClass}">${d.verdict || 'Evaluated'}</div>
+          <div class="iv-verdict ${verdictClass}">${esc(verdict)}</div>
           <p class="iv-summary">${(d.summary || '').replace(/</g,'&lt;')}</p>
           <div class="iv-speakmetrics">🗣 ${metrics.wpm ?? 'n/a'} wpm · ${metrics.fillers} fillers · ~${metrics.avgWords} words/answer</div>
         </div>
