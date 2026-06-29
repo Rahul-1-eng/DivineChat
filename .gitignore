@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# secrets & local config
+.env
+.env.local
+
+# local data (user accounts, messages) — never commit
+db.json
+
+# uploaded files
+public/uploads/*
+!public/uploads/.gitkeep
+
+# logs & os junk
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

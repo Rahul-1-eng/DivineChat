@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DivineChat</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="animations.css">
+  <link rel="stylesheet" href="fx.css">
+  <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1/index.js"></script>
+</head>
+<body data-theme="dark">
+  <canvas id="fx-bg"></canvas>
+
+  <!-- ===== Login / Register ===== -->
+  <div id="login" class="login">
+    <div class="login-card">
+      <div class="logo">💬</div>
+      <h1>DivineChat</h1>
+      <div class="auth-tabs">
+        <button id="tab-login" class="auth-tab active">Log in</button>
+        <button id="tab-register" class="auth-tab">Sign up</button>
+      </div>
+      <input id="auth-name" maxlength="24" placeholder="Username" autocomplete="username">
+      <input id="auth-pass" type="password" placeholder="Password" autocomplete="current-password">
+      <div id="auth-error" class="auth-error"></div>
+      <button id="auth-submit">Log in</button>
+      <button id="fp-login" class="fp-btn">👆 Log in with fingerprint</button>
+      <p class="auth-hint" id="auth-hint">New here? Create an account — your username is unique to you.</p>
+    </div>
+  </div>
+
+  <!-- ===== App ===== -->
+  <div id="app" class="app hidden">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <header class="sidebar-head">
+        <div class="me">
+          <span id="me-avatar" class="avatar"></span>
+          <span id="me-name" class="me-name"></span>
+        </div>
+        <button id="interview-btn" title="AI Interview Recruiter">💼</button>
+        <button id="new-group-btn" title="New group">👥</button>
+        <button id="fp-enroll" title="Add fingerprint to this account">👆</button>
+        <button id="sound-btn" title="Toggle sounds">🔊</button>
+        <button id="theme-btn" title="Toggle theme">☀️</button>
+        <button id="logout-btn" title="Log out">⎋</button>
+      </header>
+      <input id="search" class="search" placeholder="Search chats">
+      <div id="contacts" class="contacts"></div>
+    </aside>
+
+    <!-- Chat area -->
+    <main class="chat">
+      <div id="empty" class="empty">
+        <div class="empty-logo">💬</div>
+        <p>Select a chat to start messaging</p>
+      </div>
+
+      <div id="room" class="room hidden">
+        <header class="room-head">
+          <span id="room-avatar" class="avatar"></span>
+          <div class="room-meta">
+            <div id="room-name" class="room-name"></div>
+            <div id="room-status" class="room-status"></div>
+          </div>
+          <button id="call-btn" class="icon-btn" title="Voice call">📞</button>
+        </header>
+
+        <div id="messages" class="messages"></div>
+
+        <div id="typing-row" class="typing-row hidden"><span></span><span></span><span></span></div>
+
+        <footer class="composer">
+          <button id="emoji-btn" class="icon-btn" title="Emoji">😊</button>
+          <emoji-picker id="emoji-picker" class="hidden"></emoji-picker>
+          <button id="attach-btn" class="icon-btn" title="Send image">📎</button>
+          <input id="file-input" type="file" accept="image/*" hidden>
+          <textarea id="input" rows="1" placeholder="Type a message"></textarea>
+          <button id="mic-btn" class="icon-btn" title="Hold to record voice">🎤</button>
+          <button id="send-btn" class="send-btn" title="Send">➤</button>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <!-- ===== Call overlay ===== -->
+  <div id="call" class="call hidden">
+    <div class="call-card">
+      <span id="call-avatar" class="avatar big"></span>
+      <div id="call-name" class="call-name"></div>
+      <div id="call-state" class="call-state"></div>
+      <div class="call-actions">
+        <button id="call-accept" class="call-btn accept hidden">Accept</button>
+        <button id="call-mute" class="call-btn mute hidden">Mute</button>
+        <button id="call-hangup" class="call-btn hangup">End</button>
+      </div>
+    </div>
+    <audio id="remote-audio" autoplay></audio>
+  </div>
+
+  <!-- ===== New group modal ===== -->
+  <div id="group-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>New group</h3>
+      <input id="group-name" placeholder="Group name" maxlength="40">
+      <div id="group-members" class="group-members"></div>
+      <div class="modal-actions">
+        <button id="group-cancel">Cancel</button>
+        <button id="group-create" class="primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== AI Interview Recruiter ===== -->
+  <div id="interview" class="interview hidden">
+    <!-- Stage 1: intake -->
+    <section id="iv-intake" class="iv-stage">
+      <div class="iv-card">
+        <button class="iv-close" data-close>✕</button>
+        <h2>💼 AI Interview Recruiter</h2>
+        <p class="iv-sub">Tell me about your goal. The AI recruiter will run a live, on-camera interview and evaluate you.</p>
+        <label>Field / Domain</label>
+        <input id="iv-field" placeholder="e.g. Software Engineering, Data Science, Product">
+        <label>Target role</label>
+        <input id="iv-role" placeholder="e.g. Backend Engineer (SDE-2)">
+        <label>Target company <span class="opt">(optional)</span></label>
+        <input id="iv-company" placeholder="e.g. Google, Amazon, a startup">
+        <div class="iv-row">
+          <div>
+            <label>Experience</label>
+            <select id="iv-exp">
+              <option>Student / Fresher</option>
+              <option>0-2 years</option>
+              <option>2-5 years</option>
+              <option>5+ years</option>
+            </select>
+          </div>
+          <div>
+            <label>Questions</label>
+            <select id="iv-count">
+              <option value="3">3 (quick)</option>
+              <option value="5" selected>5 (standard)</option>
+              <option value="7">7 (deep)</option>
+            </select>
+          </div>
+        </div>
+        <label>Focus areas <span class="opt">(optional)</span></label>
+        <input id="iv-focus" placeholder="e.g. system design, DSA, behavioral">
+        <button id="iv-start" class="iv-primary">Start interview →</button>
+      </div>
+    </section>
+
+    <!-- Stage 2: live interview -->
+    <section id="iv-live" class="iv-stage hidden">
+      <div class="iv-live-grid">
+        <div class="iv-video-wrap">
+          <video id="iv-video" autoplay muted playsinline></video>
+          <div class="iv-rec">● REC</div>
+          <div id="iv-interviewer" class="iv-interviewer">🤖 AI Recruiter</div>
+        </div>
+        <div class="iv-side">
+          <div class="iv-progress"><span id="iv-qnum">Question 1</span> / <span id="iv-qtotal">5</span></div>
+          <div id="iv-question" class="iv-question">Preparing your first question…</div>
+          <div class="iv-transcript-label">Your answer (live transcript):</div>
+          <div id="iv-transcript" class="iv-transcript"></div>
+          <div class="iv-controls">
+            <button id="iv-answer" class="iv-primary">🎙 Start answering</button>
+            <button id="iv-next" class="iv-secondary" disabled>Next question →</button>
+          </div>
+          <button id="iv-end" class="iv-link">End & evaluate</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Stage 3: report -->
+    <section id="iv-report" class="iv-stage hidden">
+      <div class="iv-card wide">
+        <button class="iv-close" data-close>✕</button>
+        <h2>📊 Interview Evaluation</h2>
+        <div id="iv-report-body"></div>
+        <button id="iv-restart" class="iv-primary">New interview</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@13/dist/bundle/index.umd.min.js"></script>
+  <script src="fx.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+  <script src="interview.js"></script>
+</body>
+</html>

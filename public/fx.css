@@ -1,0 +1,83 @@
+/* ===================== FX styling: canvas, themes, transitions ===================== */
+
+#fx-bg {
+  position: fixed; inset: 0; z-index: -1;
+  width: 100vw; height: 100vh; display: block;
+  pointer-events: none;
+}
+
+/* let the canvas show through the app shells */
+html { background: #0b141a; transition: background .4s ease; }
+html[data-theme="light"] { background: #eef2f5; }
+body { background: transparent !important; }
+.login { background: transparent !important; }
+.app { background: transparent; }
+.sidebar { background: color-mix(in srgb, var(--panel) 86%, transparent); backdrop-filter: blur(8px); }
+.chat { background-color: color-mix(in srgb, var(--bg) 70%, transparent) !important; }
+.interview, .call { background: color-mix(in srgb, var(--bg) 82%, transparent) !important; backdrop-filter: blur(6px); }
+.iv-card, .iv-live-grid, .login-card, .modal-card {
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(12px);
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* ---------- LIGHT THEME ---------- */
+body[data-theme="light"] {
+  --bg: #eef2f5;
+  --panel: #ffffff;
+  --panel-2: #f0f3f5;
+  --accent: #00a884;
+  --accent-2: #06c191;
+  --text: #0b1418;
+  --muted: #5a6b73;
+  --bubble-in: #ffffff;
+  --bubble-out: #d9fdd3;
+  --divider: #e2e8eb;
+}
+body[data-theme="light"] .msg.out { color: #0b1418; }
+body[data-theme="light"] .iv-question { color: #0b1418; }
+body[data-theme="light"] .sidebar { box-shadow: 0 0 30px rgba(0,0,0,.05); }
+
+/* smooth theme switch */
+body, .sidebar, .chat, .panel, .iv-card, .msg, .contact, input, textarea, select, .composer, .room-head, .sidebar-head {
+  transition: background .4s ease, color .35s ease, border-color .35s ease;
+}
+
+/* theme/sound button spin on toggle */
+#theme-btn:active { transform: rotate(180deg) scale(.9); }
+
+/* ---------- Auth UI ---------- */
+.auth-tabs { display: flex; gap: 6px; background: var(--panel-2); padding: 4px; border-radius: 10px; margin-bottom: 16px; }
+.auth-tab {
+  flex: 1; padding: 9px; border: none; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--muted); font-weight: 600; font-size: 14px;
+  transition: all .2s;
+}
+.auth-tab.active { background: var(--accent); color: #04231b; }
+.auth-error { color: #ff6b6b; font-size: 13px; min-height: 18px; margin: 2px 0 8px; text-align: left; }
+.fp-btn {
+  width: 100%; margin-top: 10px; padding: 11px; border-radius: 8px;
+  border: 1px solid var(--accent); background: transparent; color: var(--accent);
+  font-weight: 600; cursor: pointer; transition: all .2s;
+}
+.fp-btn:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); transform: translateY(-1px); }
+.auth-hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
+
+/* ---------- PAGE / VIEW TRANSITIONS ---------- */
+@keyframes viewWipeIn {
+  0% { opacity: 0; transform: translateY(18px) scale(.985); filter: blur(6px); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+.iv-stage:not(.hidden) { animation: viewWipeIn .5s cubic-bezier(.2,.8,.2,1) both; }
+.room:not(.hidden) { animation: viewWipeIn .42s cubic-bezier(.2,.8,.2,1) both; }
+
+/* sweeping wipe overlay used on chat open */
+@keyframes sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.wipe-fx {
+  position: absolute; inset: 0; z-index: 5; pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 22%, transparent), transparent);
+  animation: sweep .6s ease;
+}

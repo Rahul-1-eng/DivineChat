@@ -1,0 +1,148 @@
+/* ============================================================
+   ✨ ANIMATION & POLISH LAYER — "bringing it to life"
+   ============================================================ */
+
+* { -webkit-font-smoothing: antialiased; }
+button, .contact, .icon-btn, .send-btn, .iv-primary, .iv-secondary, .call-btn, .avatar {
+  transition: transform .18s cubic-bezier(.34,1.56,.64,1), background .2s ease,
+              box-shadow .25s ease, color .2s ease, opacity .2s ease;
+  will-change: transform;
+}
+
+/* ---- keyframes ---- */
+@keyframes fadeUp { from { opacity:0; transform: translateY(14px); } to { opacity:1; transform:none; } }
+@keyframes fadeDown { from { opacity:0; transform: translateY(-14px); } to { opacity:1; transform:none; } }
+@keyframes popIn { 0% { opacity:0; transform: scale(.8) translateY(8px); } 100% { opacity:1; transform:none; } }
+@keyframes slideInLeft { from { opacity:0; transform: translateX(-26px); } to { opacity:1; transform:none; } }
+@keyframes slideInRight { from { opacity:0; transform: translateX(26px); } to { opacity:1; transform:none; } }
+@keyframes scaleIn { from { opacity:0; transform: scale(.9); } to { opacity:1; transform:none; } }
+@keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+@keyframes glowPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(0,168,132,.45); }
+  50% { box-shadow: 0 0 26px 4px rgba(0,168,132,.35); }
+}
+@keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+@keyframes gradientShift { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+@keyframes rippleAnim { to { transform: scale(4); opacity: 0; } }
+@keyframes ringFill { from { transform: scale(.6); opacity:0; } to { transform: scale(1); opacity:1; } }
+
+/* ---- animated backgrounds ---- */
+.login {
+  background: linear-gradient(130deg, #0b141a, #103b32, #0b141a, #0d2a3a);
+  background-size: 400% 400%;
+  animation: gradientShift 16s ease infinite;
+}
+.login::before, .interview::before, .call::before {
+  content:''; position:absolute; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(600px circle at 15% 20%, rgba(0,168,132,.14), transparent 40%),
+    radial-gradient(500px circle at 85% 80%, rgba(0,120,200,.12), transparent 40%);
+  animation: floaty 9s ease-in-out infinite;
+}
+
+/* ---- login ---- */
+.login-card { animation: scaleIn .55s cubic-bezier(.2,.8,.2,1) both; position: relative; z-index: 1; }
+.login-card .logo { display:inline-block; animation: floaty 3.5s ease-in-out infinite; filter: drop-shadow(0 8px 16px rgba(0,168,132,.4)); }
+.login-card h1 {
+  background: linear-gradient(90deg,#00a884,#5ef0c4,#00a884);
+  background-size: 200% auto; -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; animation: gradientShift 4s linear infinite;
+}
+.login-card input { transition: border-color .2s, box-shadow .2s, transform .2s; }
+.login-card input:focus { box-shadow: 0 0 0 3px rgba(0,168,132,.18); transform: translateY(-1px); }
+.login-card button:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(0,168,132,.4); }
+.login-card button:active { transform: translateY(0) scale(.97); }
+
+/* ---- app entrance ---- */
+.app:not(.hidden) .sidebar { animation: slideInLeft .5s cubic-bezier(.2,.8,.2,1) both; }
+.app:not(.hidden) .chat { animation: fadeUp .55s ease both; }
+.sidebar-head { animation: fadeDown .5s ease both; }
+
+/* ---- contacts ---- */
+.contact { animation: fadeUp .4s ease both; position: relative; overflow: hidden; }
+.contact:nth-child(1){animation-delay:.02s}.contact:nth-child(2){animation-delay:.06s}
+.contact:nth-child(3){animation-delay:.10s}.contact:nth-child(4){animation-delay:.14s}
+.contact:nth-child(5){animation-delay:.18s}.contact:nth-child(6){animation-delay:.22s}
+.contact:nth-child(7){animation-delay:.26s}.contact:nth-child(8){animation-delay:.30s}
+.contact:hover { transform: translateX(4px); }
+.contact.active { box-shadow: inset 3px 0 0 var(--accent); }
+.contact .ripple {
+  position:absolute; border-radius:50%; background: rgba(0,168,132,.35);
+  transform: scale(0); animation: rippleAnim .6s ease-out; pointer-events:none;
+}
+
+/* ---- avatars ---- */
+.avatar:hover { transform: scale(1.08) rotate(-3deg); }
+.avatar .dot { animation: glowPulse 2s ease-in-out infinite; }
+
+/* ---- messages ---- */
+.msg.in { animation: slideInLeft .32s cubic-bezier(.2,.8,.2,1) both; }
+.msg.out { animation: slideInRight .32s cubic-bezier(.2,.8,.2,1) both; }
+.msg img { transition: transform .25s ease; }
+.msg img:hover { transform: scale(1.02); }
+
+/* ---- buttons ---- */
+.icon-btn:hover { transform: translateY(-2px) scale(1.06); }
+.icon-btn:active { transform: scale(.9); }
+.send-btn:hover { transform: scale(1.12) rotate(6deg); box-shadow: 0 6px 18px rgba(0,168,132,.5); }
+.send-btn:active { transform: scale(.92); }
+#call-btn:hover { animation: glowPulse 1.4s ease-in-out infinite; color:#2ecc71; }
+.typing-row:not(.hidden) { animation: fadeUp .3s ease both; }
+
+/* ---- call overlay ---- */
+.call:not(.hidden) { animation: scaleIn .35s ease both; }
+.call .avatar.big { animation: floaty 3s ease-in-out infinite, glowPulse 2s ease-in-out infinite; }
+.call-btn:hover { transform: translateY(-3px) scale(1.05); }
+.call-btn:active { transform: scale(.95); }
+.call-btn.hangup:hover { box-shadow: 0 8px 24px rgba(255,59,48,.5); }
+
+/* ---- modal ---- */
+.modal:not(.hidden) { animation: fadeUp .25s ease both; }
+.modal-card { animation: popIn .35s cubic-bezier(.2,.8,.2,1) both; }
+.modal-actions button:hover { transform: translateY(-2px); }
+
+/* ============ INTERVIEW ============ */
+.interview:not(.hidden) { animation: fadeUp .3s ease both; }
+.iv-card { animation: popIn .45s cubic-bezier(.2,.8,.2,1) both; position: relative; z-index: 1; }
+.iv-card h2 {
+  background: linear-gradient(90deg,#00a884,#5ef0c4);
+  -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+}
+.iv-card input:focus, .iv-card select:focus { box-shadow: 0 0 0 3px rgba(0,168,132,.16); }
+.iv-primary { position: relative; overflow: hidden; }
+.iv-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(0,168,132,.4); }
+.iv-primary:active { transform: translateY(0) scale(.98); }
+.iv-secondary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,168,132,.25); }
+
+#iv-live:not(.hidden) .iv-video-wrap { animation: slideInLeft .5s ease both; }
+#iv-live:not(.hidden) .iv-side { animation: slideInRight .5s ease both; }
+.iv-video-wrap::after {
+  content:''; position:absolute; inset:0; border-radius:12px; pointer-events:none;
+  box-shadow: inset 0 0 60px rgba(0,168,132,.15); animation: glowPulse 3s ease-in-out infinite;
+}
+.iv-question { animation: fadeUp .4s ease both; }
+
+#iv-report:not(.hidden) .iv-card { animation: popIn .5s cubic-bezier(.2,.8,.2,1) both; }
+.iv-score-ring { animation: ringFill .6s cubic-bezier(.2,.8,.2,1) both, glowPulse 2.6s ease-in-out 1s infinite; }
+.iv-metric { animation: fadeUp .45s ease both; }
+.iv-metric:nth-child(1){animation-delay:.05s}.iv-metric:nth-child(2){animation-delay:.12s}
+.iv-metric:nth-child(3){animation-delay:.19s}.iv-metric:nth-child(4){animation-delay:.26s}
+.iv-metric:nth-child(5){animation-delay:.33s}.iv-metric:nth-child(6){animation-delay:.40s}
+.iv-fill { position: relative; overflow: hidden; }
+.iv-fill::after {
+  content:''; position:absolute; inset:0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
+  background-size: 200px 100%; animation: shimmer 2s linear infinite;
+}
+.iv-two > div { animation: fadeUp .5s ease both; }
+.iv-two > div:nth-child(2){ animation-delay:.12s; }
+.iv-note { animation: fadeUp .4s ease both; }
+.iv-loading {
+  background: linear-gradient(90deg, var(--muted), #fff, var(--muted));
+  background-size: 400px 100%; -webkit-background-clip:text; background-clip:text;
+  -webkit-text-fill-color: transparent; animation: shimmer 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "divinechat",
+  "version": "1.0.0",
+  "description": "Local-first real-time chat with WhatsApp-style messaging, WebRTC voice calls, a local AI assistant, and an on-camera AI interview recruiter. Runs entirely on your machine via Ollama.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": ["chat", "websocket", "webrtc", "ollama", "ai", "webauthn", "socket.io"],
+  "license": "MIT",
+  "dependencies": {
+    "@simplewebauthn/server": "^13.3.2",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "multer": "^2.2.0",
+    "socket.io": "^4.8.3"
+  }
+}
