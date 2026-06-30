@@ -12,6 +12,9 @@ db.json
 public/uploads/*
 !public/uploads/.gitkeep
 
+# local tunnel binary (not part of the app)
+cloudflared.exe
+
 # logs & os junk
 *.log
 npm-debug.log*
