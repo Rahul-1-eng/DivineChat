@@ -348,22 +348,30 @@ function stopRec() {
 
 /* ===================== WebRTC voice calls ===================== */
 let pc = null, localStream = null, callPeer = null, callIncoming = null, muted = false;
+let callKind = 'audio', camOff = false;
 const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-$('call-btn').onclick = () => startCall(active.username);
+$('call-btn').onclick = () => startCall(active.username, 'audio');
+$('video-btn').onclick = () => startCall(active.username, 'video');
 $('call-hangup').onclick = endCall;
 $('call-accept').onclick = acceptCall;
 $('call-mute').onclick = toggleMute;
+$('call-cam').onclick = toggleCam;
 
-async function getMic() {
-  localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+async function getMedia(kind) {
+  localStream = await navigator.mediaDevices.getUserMedia(
+    kind === 'video' ? { audio: true, video: { facingMode: 'user' } } : { audio: true });
+  if (kind === 'video') $('local-video').srcObject = localStream;
   return localStream;
 }
 function newPeer(peer) {
   callPeer = peer;
   pc = new RTCPeerConnection(ICE);
   pc.onicecandidate = e => { if (e.candidate) socket.emit('call:ice', { to: peer, candidate: e.candidate }); };
-  pc.ontrack = e => { $('remote-audio').srcObject = e.streams[0]; };
+  pc.ontrack = e => {
+    $('remote-audio').srcObject = e.streams[0];
+    $('remote-video').srcObject = e.streams[0];
+  };
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'connected') $('call-state').textContent = 'Connected';
     if (['disconnected','failed','closed'].includes(pc.connectionState)) endCall(true);
@@ -371,30 +379,36 @@ function newPeer(peer) {
   return pc;
 }
 function showCall(name, state, { accept = false } = {}) {
+  const video = callKind === 'video';
   $('call').classList.remove('hidden');
+  $('call').classList.toggle('video', video);
+  $('call-video').classList.toggle('hidden', !video);
   setAvatar($('call-avatar'), name, colorOf(name) || '#00a884');
-  $('call-name').textContent = name;
+  $('call-name').textContent = name + (video ? ' · Video' : '');
   $('call-state').textContent = state;
   $('call-accept').classList.toggle('hidden', !accept);
   $('call-mute').classList.toggle('hidden', accept);
+  $('call-cam').classList.toggle('hidden', accept || !video);
 }
 
-async function startCall(peer) {
+async function startCall(peer, kind = 'audio') {
   try {
-    await getMic();
+    callKind = kind;
+    await getMedia(kind);
     newPeer(peer);
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-    showCall(peer, 'Calling…');
+    showCall(peer, kind === 'video' ? 'Video calling…' : 'Calling…');
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    socket.emit('call:offer', { to: peer, sdp: offer });
+    socket.emit('call:offer', { to: peer, sdp: offer, kind });
   } catch (e) { alert('Could not start call: ' + e.message); endCall(true); }
 }
 
-socket.on('call:offer', async ({ from, sdp }) => {
+socket.on('call:offer', async ({ from, sdp, kind }) => {
   if (pc) { socket.emit('call:reject', { to: from }); return; }   // busy
+  callKind = kind === 'video' ? 'video' : 'audio';
   callIncoming = { from, sdp };
-  showCall(from, 'Incoming call…', { accept: true });
+  showCall(from, callKind === 'video' ? 'Incoming video call…' : 'Incoming call…', { accept: true });
   window.fx?.sound('ring');
   ringTimer = setInterval(() => window.fx?.sound('ring'), 2500);
 });
@@ -403,7 +417,7 @@ function stopRing() { clearInterval(ringTimer); ringTimer = null; }
 async function acceptCall() {
   stopRing();
   const { from, sdp } = callIncoming; callIncoming = null;
-  await getMic();
+  await getMedia(callKind);
   newPeer(from);
   localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
   await pc.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -426,14 +440,23 @@ function toggleMute() {
   localStream?.getAudioTracks().forEach(t => t.enabled = !muted);
   $('call-mute').textContent = muted ? 'Unmute' : 'Mute';
 }
+function toggleCam() {
+  camOff = !camOff;
+  localStream?.getVideoTracks().forEach(t => t.enabled = !camOff);
+  $('call-cam').textContent = camOff ? 'Camera On' : 'Camera Off';
+}
 function endCall(remote = false) {
   stopRing();
   if (!remote && callPeer) socket.emit('call:hangup', { to: callPeer });
   pc?.close(); pc = null;
   localStream?.getTracks().forEach(t => t.stop()); localStream = null;
-  callPeer = null; callIncoming = null; muted = false;
+  callPeer = null; callIncoming = null; muted = false; camOff = false; callKind = 'audio';
+  $('remote-video').srcObject = null; $('local-video').srcObject = null;
   $('call').classList.add('hidden');
+  $('call').classList.remove('video');
+  $('call-video').classList.add('hidden');
   $('call-mute').textContent = 'Mute';
+  $('call-cam').textContent = 'Camera Off';
 }
 
 /* ---------- Groups ---------- */

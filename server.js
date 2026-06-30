@@ -17,6 +17,7 @@ dotenv.config();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
+app.set('trust proxy', true);   // honor X-Forwarded-* from the host's proxy (Render/Fly/Nginx)
 const httpServer = createServer(app);
 const io = new Server(httpServer, { maxHttpBufferSize: 1e7 });
 const port = process.env.PORT || 3000;
@@ -25,10 +26,20 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
 const AI_USER = 'AI Assistant';
 
-// WebAuthn (fingerprint) config — override via .env in production
-const RP_ID = process.env.RP_ID || 'localhost';
+// WebAuthn (fingerprint) config.
+// RP_ID/ORIGIN are auto-derived from each request's domain so fingerprint login
+// works on any deployed domain with zero config. Set RP_ID/ORIGIN in .env only
+// if you need to force a specific value (e.g. behind an unusual proxy setup).
 const RP_NAME = 'DivineChat';
-const ORIGIN = process.env.ORIGIN || `http://localhost:${port}`;
+function rpFromReq(req) {
+  const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${port}`;
+  const hostname = host.split(':')[0];
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
+  return {
+    rpID: process.env.RP_ID || hostname,
+    origin: process.env.ORIGIN || `${proto}://${host}`,
+  };
+}
 
 // ---------- persistence (simple JSON db) ----------
 const DB_PATH = join(__dirname, 'db.json');
@@ -138,8 +149,9 @@ app.get('/api/me', authREST, (req, res) => res.json({ user: publicUser(db.users[
 // ---- WebAuthn: enroll a fingerprint (must be logged in) ----
 app.post('/api/webauthn/register/options', authREST, async (req, res) => {
   const user = db.users[req.username];
+  const { rpID } = rpFromReq(req);
   const options = await generateRegistrationOptions({
-    rpName: RP_NAME, rpID: RP_ID,
+    rpName: RP_NAME, rpID,
     userName: user.username,
     attestationType: 'none',
     authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
@@ -151,11 +163,12 @@ app.post('/api/webauthn/register/options', authREST, async (req, res) => {
 
 app.post('/api/webauthn/register/verify', authREST, async (req, res) => {
   const user = db.users[req.username];
+  const { rpID, origin } = rpFromReq(req);
   try {
     const verification = await verifyRegistrationResponse({
       response: req.body,
       expectedChallenge: challenges.get(user.username),
-      expectedOrigin: ORIGIN, expectedRPID: RP_ID,
+      expectedOrigin: origin, expectedRPID: rpID,
     });
     if (!verification.verified || !verification.registrationInfo) return res.status(400).json({ error: 'verification failed' });
     const { credential } = verification.registrationInfo;
@@ -173,8 +186,9 @@ app.post('/api/webauthn/register/verify', authREST, async (req, res) => {
 app.post('/api/webauthn/login/options', async (req, res) => {
   const user = findUser(req.body?.username);
   if (!user || !(user.credentials || []).length) return res.status(404).json({ error: 'No fingerprint registered for this user' });
+  const { rpID } = rpFromReq(req);
   const options = await generateAuthenticationOptions({
-    rpID: RP_ID,
+    rpID,
     allowCredentials: user.credentials.map(c => ({ id: c.id })),
     userVerification: 'preferred',
   });
@@ -188,11 +202,12 @@ app.post('/api/webauthn/login/verify', async (req, res) => {
   const cred = (user.credentials || []).find(c => c.id === req.body.response?.id || c.id === req.body.id);
   const stored = cred || (user.credentials || [])[0];
   if (!stored) return res.status(400).json({ error: 'no credential' });
+  const { rpID, origin } = rpFromReq(req);
   try {
     const verification = await verifyAuthenticationResponse({
       response: req.body.response || req.body,
       expectedChallenge: challenges.get(user.username),
-      expectedOrigin: ORIGIN, expectedRPID: RP_ID,
+      expectedOrigin: origin, expectedRPID: rpID,
       credential: {
         id: stored.id,
         publicKey: new Uint8Array(Buffer.from(stored.publicKey, 'base64')),

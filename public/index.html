@@ -65,6 +65,7 @@
             <div id="room-status" class="room-status"></div>
           </div>
           <button id="call-btn" class="icon-btn" title="Voice call">📞</button>
+          <button id="video-btn" class="icon-btn" title="Video call">📹</button>
         </header>
 
         <div id="messages" class="messages"></div>
@@ -86,12 +87,17 @@
 
   <!-- ===== Call overlay ===== -->
   <div id="call" class="call hidden">
+    <div id="call-video" class="call-video hidden">
+      <video id="remote-video" autoplay playsinline></video>
+      <video id="local-video" autoplay playsinline muted></video>
+    </div>
     <div class="call-card">
       <span id="call-avatar" class="avatar big"></span>
       <div id="call-name" class="call-name"></div>
       <div id="call-state" class="call-state"></div>
       <div class="call-actions">
         <button id="call-accept" class="call-btn accept hidden">Accept</button>
+        <button id="call-cam" class="call-btn cam hidden">Camera Off</button>
         <button id="call-mute" class="call-btn mute hidden">Mute</button>
         <button id="call-hangup" class="call-btn hangup">End</button>
       </div>
