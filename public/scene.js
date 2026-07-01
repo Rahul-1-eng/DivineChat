@@ -5,7 +5,7 @@ const container = document.getElementById('scene-container');
 // 1. CORE SCENE
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0a0a);
-scene.fog = new THREE.FogExp2(0x0a0a0a, 0.04);
+scene.fog = new THREE.FogExp2(0x0a0a0a, 0.005);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 1.5, 6);
@@ -17,60 +17,110 @@ container.appendChild(renderer.domElement);
 
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
 scene.add(ambientLight);
-
 const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
 dirLight.position.set(5, 10, 5);
 scene.add(dirLight);
 
-// 2. THE AVATAR (The Green Capsule)
-const avatarGeometry = new THREE.CapsuleGeometry(0.5, 1.2, 4, 16);
-const avatarMaterial = new THREE.MeshStandardMaterial({ color: 0x10a37f, roughness: 0.2, metalness: 0.8 });
-const avatar = new THREE.Mesh(avatarGeometry, avatarMaterial);
-avatar.position.y = 1.2;
-scene.add(avatar);
-
-// 3. DYNAMIC 3D TERRAIN (The Morphing Floor)
+// 2. THE DYNAMIC TERRAIN
 const floorGeo = new THREE.PlaneGeometry(40, 40, 40, 40);
-const floorMat = new THREE.MeshStandardMaterial({ 
-    color: 0x006699, 
-    wireframe: true, // Set to true so you can easily see the waves moving!
-    roughness: 0.1,
-    transparent: true,
-    opacity: 0.6
-});
+const floorMat = new THREE.MeshStandardMaterial({ color: 0x006699, wireframe: true, roughness: 0.1, transparent: true, opacity: 0.6 });
 const floor = new THREE.Mesh(floorGeo, floorMat);
 floor.rotation.x = -Math.PI / 2;
 floor.position.y = -1;
 scene.add(floor);
 
-// 4. THE PARTICLES
+// 3. THE PARTICLES
 const particleCount = 1500;
 const particlesGeometry = new THREE.BufferGeometry();
 const particlesPositions = new Float32Array(particleCount * 3);
-for(let i = 0; i < particleCount * 3; i++) {
-    particlesPositions[i] = (Math.random() - 0.5) * 20; 
-}
+for(let i = 0; i < particleCount * 3; i++) { particlesPositions[i] = (Math.random() - 0.5) * 20; }
 particlesGeometry.setAttribute('position', new THREE.BufferAttribute(particlesPositions, 3));
 const particlesMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.08, transparent: true, opacity: 0.6 });
 const particles = new THREE.Points(particlesGeometry, particlesMaterial);
 scene.add(particles);
 
-// 5. STATE & TRANSITIONS
-let currentAnimation = 'idle';
+// 4. MULTIPLAYER AVATAR MANAGER WITH ARMS AND PROFILE PHOTOS
+const avatars = {}; 
+const avatarColors = [0x3498db, 0x10a37f, 0xe74c3c, 0xf39c12, 0x9b59b6];
+
+function createAvatar(actorName, profilePicUrl = null) {
+    const group = new THREE.Group();
+    const color = avatarColors[Object.keys(avatars).length % avatarColors.length];
+
+    // Body
+    const bodyGeo = new THREE.CapsuleGeometry(0.4, 0.8, 4, 16);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.2, metalness: 0.8 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.position.y = 0.8;
+    group.add(body);
+
+    // Arms
+    const armGeo = new THREE.CapsuleGeometry(0.12, 0.4, 4, 8);
+    const leftArm = new THREE.Mesh(armGeo, bodyMat); leftArm.position.set(-0.55, 1.0, 0);
+    const rightArm = new THREE.Mesh(armGeo, bodyMat); rightArm.position.set(0.55, 1.0, 0);
+    group.add(leftArm); group.add(rightArm);
+
+    // Head with Profile Photo Texture Support
+    const headGeo = new THREE.SphereGeometry(0.35, 32, 32);
+    let headMat;
+    
+    if (profilePicUrl) {
+        const loader = new THREE.TextureLoader();
+        loader.setCrossOrigin('anonymous');
+        const texture = loader.load(profilePicUrl);
+        headMat = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.4 });
+    } else {
+        headMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+    }
+    
+    const head = new THREE.Mesh(headGeo, headMat);
+    head.position.y = 1.6;
+    
+    // Only add black dot eyes if there is NO profile picture
+    if (!profilePicUrl) {
+        const eyeGeo = new THREE.SphereGeometry(0.05, 8, 8);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+        const leftEye = new THREE.Mesh(eyeGeo, eyeMat); leftEye.position.set(-0.15, 0.1, 0.3);
+        const rightEye = new THREE.Mesh(eyeGeo, eyeMat); rightEye.position.set(0.15, 0.1, 0.3);
+        head.add(leftEye); head.add(rightEye);
+    }
+    group.add(head);
+
+    const isFirst = Object.keys(avatars).length === 0;
+    group.position.x = isFirst ? -1.5 : 1.5;
+    group.rotation.y = isFirst ? Math.PI / 4 : -Math.PI / 4;
+
+    scene.add(group);
+    avatars[actorName] = { group, body, head, leftArm, rightArm, animation: 'idle', offset: Math.random() * 10, timeout: null };
+    return avatars[actorName];
+}
+
+// 5. SCENE STATE
 let currentEnv = 'space';
 const targetBgColor = new THREE.Color(0x0a0a0a);
 const targetFogColor = new THREE.Color(0x0a0a0a);
 const targetFloorColor = new THREE.Color(0x000000);
 let particleSpeed = 0.02;
 
-// 6. THE BRIDGE
+// 6. LISTEN FOR CHAT EVENTS
 window.addEventListener('updateScene', (e) => {
     const data = e.detail;
-    changeEnvironment(data.environment);
-    currentAnimation = data.animation || 'idle';
+    if (data.environment) changeEnvironment(data.environment);
+    
+    if (data.actor) {
+        if (!avatars[data.actor]) createAvatar(data.actor, data.actorPic);
+        avatars[data.actor].animation = data.animation || 'idle';
+        
+        // Return to idle state after animation duration
+        if (data.animation === 'talk' || data.animation === 'typing') {
+            clearTimeout(avatars[data.actor].timeout);
+            avatars[data.actor].timeout = setTimeout(() => {
+                if (avatars[data.actor]) avatars[data.actor].animation = 'idle';
+            }, data.animation === 'typing' ? 2500 : 3000);
+        }
+    }
 });
 
-// 7. THE DIRECTOR LOGIC
 function changeEnvironment(preset) {
     currentEnv = preset;
     const envMap = {
@@ -83,71 +133,61 @@ function changeEnvironment(preset) {
         'fire':       { bg: 0x220000, fog: 0x330000, pColor: 0xff4400, speed: -0.06, fColor: 0x660000, wire: true, showFloor: true },
         'clouds':     { bg: 0x112233, fog: 0x88aabb, pColor: 0xffffff, speed: 0.005, fColor: 0xffffff, wire: false, showFloor: false }
     };
-
     const config = envMap[preset] || envMap['space']; 
-    
-    targetBgColor.setHex(config.bg);
-    targetFogColor.setHex(config.fog);
-    targetFloorColor.setHex(config.fColor);
-    particlesMaterial.color.setHex(config.pColor);
-    particleSpeed = config.speed;
-    
-    floor.visible = config.showFloor;
-    floorMat.wireframe = config.wire;
-    
-    avatarMaterial.color.setHex(preset === 'fire' ? 0xff3333 : 0x10a37f);
+    targetBgColor.setHex(config.bg); targetFogColor.setHex(config.fog); targetFloorColor.setHex(config.fColor);
+    particlesMaterial.color.setHex(config.pColor); particleSpeed = config.speed;
+    floor.visible = config.showFloor; floorMat.wireframe = config.wire;
 }
 
-// 8. THE ANIMATION LOOP
+// 7. THE ANIMATION LOOP
 const clock = new THREE.Clock();
-
 function animate() {
     requestAnimationFrame(animate);
     const time = clock.getElapsedTime();
 
-    // Smooth Color Fades
     scene.background.lerp(targetBgColor, 0.02);
     scene.fog.color.lerp(targetFogColor, 0.02);
     floorMat.color.lerp(targetFloorColor, 0.02);
 
-    // Capsule Animations
-    if (currentAnimation === 'idle') {
-        avatar.position.y = 1.2 + Math.sin(time * 2) * 0.1; 
-        avatar.rotation.y = Math.sin(time * 0.5) * 0.2;
-    } else if (currentAnimation === 'talk') {
-        avatar.position.y = 1.2 + Math.sin(time * 10) * 0.05; 
-        avatar.rotation.y = Math.sin(time * 3) * 0.3;
-    } else if (currentAnimation === 'wave' || currentAnimation === 'laugh') {
-        avatar.position.y = 1.2 + Math.abs(Math.sin(time * 8)) * 0.4; 
-        avatar.rotation.y += 0.05; 
-    } else {
-        avatar.position.y = 1.2;
-    }
+    Object.values(avatars).forEach(av => {
+        const t = time + av.offset;
+        if (av.animation === 'idle') {
+            av.group.position.y = Math.sin(t * 2) * 0.05; 
+            av.head.rotation.y = Math.sin(t * 0.5) * 0.2;
+            av.head.rotation.x = 0;
+            av.leftArm.rotation.x = Math.sin(t * 2) * 0.1; 
+            av.rightArm.rotation.x = Math.sin(t * 2 + 1) * 0.1;
+            av.leftArm.rotation.z = 0; av.rightArm.rotation.z = 0;
+        } else if (av.animation === 'talk') {
+            av.group.position.y = Math.sin(t * 10) * 0.05; 
+            av.head.rotation.x = Math.abs(Math.sin(t * 8)) * 0.2; 
+            av.leftArm.rotation.x = Math.sin(t * 15) * 0.5; 
+            av.rightArm.rotation.x = Math.sin(t * 15 + 1) * 0.5;
+            av.leftArm.rotation.z = 0; av.rightArm.rotation.z = 0;
+        } else if (av.animation === 'wave' || av.animation === 'laugh') {
+            av.group.position.y = Math.abs(Math.sin(t * 8)) * 0.3; 
+            av.head.rotation.y = Math.sin(t * 12) * 0.3; 
+            av.leftArm.rotation.z = Math.sin(t * 10) * 1.5; 
+            av.rightArm.rotation.z = -Math.sin(t * 10) * 1.5;
+        } else if (av.animation === 'typing') {
+            av.leftArm.rotation.x = -0.5 + Math.sin(t * 20) * 0.2; 
+            av.rightArm.rotation.x = -0.5 + Math.cos(t * 20) * 0.2;
+            av.leftArm.rotation.z = 0; av.rightArm.rotation.z = 0;
+        }
+    });
 
-    // FULLY ANIMATED MORPHING TERRAIN
     if (floor.visible) {
         const positions = floorGeo.attributes.position.array;
         for(let i = 0; i < positions.length; i += 3) {
-            const x = positions[i];
-            const y = positions[i+1]; 
-            
-            if (currentEnv === 'beach' || currentEnv === 'underwater') {
-                // Rolling ocean waves
-                positions[i+2] = Math.sin(x * 0.5 + time) * 0.3 + Math.cos(y * 0.5 + time) * 0.3;
-            } else if (currentEnv === 'forest' || currentEnv === 'snow') {
-                // Bumpy hills
-                positions[i+2] = Math.sin(x * 0.3) * 0.5 + Math.cos(y * 0.3) * 0.5;
-            } else if (currentEnv === 'rain-city' || currentEnv === 'fire') {
-                // Glitching grids
-                positions[i+2] = Math.random() * 0.3;
-            } else {
-                positions[i+2] = 0;
-            }
+            const x = positions[i], y = positions[i+1]; 
+            if (currentEnv === 'beach' || currentEnv === 'underwater') positions[i+2] = Math.sin(x * 0.5 + time) * 0.3 + Math.cos(y * 0.5 + time) * 0.3;
+            else if (currentEnv === 'forest' || currentEnv === 'snow') positions[i+2] = Math.sin(x * 0.3) * 0.5 + Math.cos(y * 0.3) * 0.5;
+            else if (currentEnv === 'rain-city' || currentEnv === 'fire') positions[i+2] = Math.random() * 0.3;
+            else positions[i+2] = 0;
         }
         floorGeo.attributes.position.needsUpdate = true;
     }
 
-    // Particles
     const pPositions = particlesGeometry.attributes.position.array;
     for(let i = 1; i < particleCount * 3; i += 3) { 
         pPositions[i] -= particleSpeed; 
@@ -158,11 +198,9 @@ function animate() {
     
     renderer.render(scene, camera);
 }
-
 animate();
 
 window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
+    camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 });

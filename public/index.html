@@ -34,23 +34,15 @@
       background-color: transparent !important;
     }
 
-    /* Apply a beautiful glass effect to the panels so the 3D world shows through */
+    /* Transparent panels with NO BLUR */
     .sidebar, .chat, .login-card {
-      background-color: rgba(17, 27, 33, 0.45) !important; /* Semi-transparent dark */
-      backdrop-filter: blur(8px) !important;
-      -webkit-backdrop-filter: blur(8px) !important;
+      background-color: rgba(17, 27, 33, 0.45) !important;
       border: 1px solid rgba(255, 255, 255, 0.05) !important;
     }
 
-    /* Ensure message bubbles stay readable */
-    .msg.in {
-      background-color: rgba(32, 44, 51, 0.85) !important;
-      backdrop-filter: blur(4px) !important;
-    }
-    .msg.out {
-      background-color: rgba(0, 92, 75, 0.85) !important;
-      backdrop-filter: blur(4px) !important;
-    }
+    /* Message bubbles with NO BLUR */
+    .msg.in { background-color: rgba(32, 44, 51, 0.85) !important; }
+    .msg.out { background-color: rgba(0, 92, 75, 0.85) !important; }
   </style>
 </head>
 <body data-theme="dark">

@@ -2,6 +2,9 @@ import express from 'express';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose';
+import { v2 as cloudinary } from 'cloudinary';
+import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import { randomBytes } from 'crypto';
 import {
   generateRegistrationOptions, verifyRegistrationResponse,
@@ -10,8 +13,7 @@ import {
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
-import { dirname, join, extname } from 'path';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { dirname, join } from 'path';
 
 dotenv.config();
 
@@ -31,71 +33,74 @@ function rpFromReq(req) {
   const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${port}`;
   const hostname = host.split(':')[0];
   const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
-  return {
-    rpID: process.env.RP_ID || hostname,
-    origin: process.env.ORIGIN || `${proto}://${host}`,
-  };
+  return { rpID: process.env.RP_ID || hostname, origin: process.env.ORIGIN || `${proto}://${host}` };
 }
 
-const DB_PATH = join(__dirname, 'db.json');
-const UPLOAD_DIR = join(__dirname, 'public', 'uploads');
-if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
+// ===================== MONGODB CONFIG =====================
+mongoose.connect(process.env.MONGODB_URI)
+  .then(async () => {
+    console.log('MongoDB connected successfully');
+    const ai = await User.findOne({ username: AI_USER });
+    if (!ai) await User.create({ username: AI_USER, color: '#10a37f', bot: true, credentials: [], createdAt: Date.now() });
+  })
+  .catch(err => console.error('MongoDB connection error:', err));
 
-let db = { users: {}, messages: {}, groups: {} };
-if (existsSync(DB_PATH)) {
-  try { db = JSON.parse(readFileSync(DB_PATH, 'utf8')); } catch { }
-}
-db.users ||= {};
-db.messages ||= {};   
-db.groups ||= {};     
-db.users[AI_USER] ||= { username: AI_USER, color: '#10a37f', bot: true };
+const UserSchema = new mongoose.Schema({
+  username: { type: String, unique: true }, color: String, passHash: String,
+  profilePic: String, 
+  credentials: Array, bot: { type: Boolean, default: false }, createdAt: Number
+});
+const User = mongoose.model('User', UserSchema);
 
-let saveTimer = null;
-function persist() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try { writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); } catch (e) {}
-  }, 200);
-}
+const MessageSchema = new mongoose.Schema({
+  id: String, conversationId: String, from: String, type: String,
+  content: String, meta: mongoose.Schema.Types.Mixed, ts: Number, status: String
+});
+const Message = mongoose.model('Message', MessageSchema);
 
+const GroupSchema = new mongoose.Schema({
+  id: { type: String, unique: true }, name: String, members: [String], color: String
+});
+const Group = mongoose.model('Group', GroupSchema);
+
+// ===================== CLOUDINARY CONFIG =====================
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: { folder: 'divinechat_uploads', resource_type: 'auto' },
+});
+const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
+
+// ===================== UTILS =====================
 const COLORS = ['#e74c3c','#3498db','#9b59b6','#e67e22','#1abc9c','#f39c12','#2ecc71','#fd79a8','#0984e3'];
 function colorFor(name) {
   let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return COLORS[h % COLORS.length];
 }
-
 function dmId(a, b) { return 'dm:' + [a, b].sort().join('|'); }
-function pushMessage(conversationId, msg) {
-  (db.messages[conversationId] ||= []).push(msg);
-  if (db.messages[conversationId].length > 500) db.messages[conversationId].shift();
-  persist();
-}
-
-const storage = multer.diskStorage({
-  destination: UPLOAD_DIR,
-  filename: (req, file, cb) => {
-    const safe = 'f' + Math.abs(hashStr(file.originalname + file.size)) + Date.now().toString(36) + extname(file.originalname || '.bin');
-    cb(null, safe);
-  }
-});
 function hashStr(s){let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))|0;return h;}
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 app.use(express.json({ limit: '12mb' }));
 app.use(express.static(join(__dirname, 'public')));
 
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'no file' });
-  res.json({ url: '/uploads/' + req.file.filename, name: req.file.originalname, size: req.file.size });
+  res.json({ url: req.file.path, name: req.file.originalname, size: req.file.size });
 });
 
-const tokens = new Map();                    
-const challenges = new Map();                
+// ===================== AUTH & USERS =====================
+const tokens = new Map();
+const challenges = new Map();
 const VALID_NAME = /^[a-zA-Z0-9_.]{3,24}$/;
 
-function findUser(name) {                     
-  const key = Object.keys(db.users).find(u => u.toLowerCase() === String(name).toLowerCase());
-  return key ? db.users[key] : null;
+async function findUser(name) {
+  if (!name) return null;
+  return await User.findOne({ username: new RegExp('^' + name + '$', 'i') });
 }
 function issueToken(username) {
   const tok = randomBytes(24).toString('hex');
@@ -110,40 +115,50 @@ function authREST(req, res, next) {
   req.username = u;
   next();
 }
-const publicUser = (u) => ({ username: u.username, color: u.color, hasFingerprint: (u.credentials || []).length > 0 });
+const publicUser = (u) => ({ username: u.username, color: u.color, profilePic: u.profilePic, hasFingerprint: (u.credentials || []).length > 0 });
 
 app.post('/api/register', async (req, res) => {
   let { username, password } = req.body || {};
   username = String(username || '').trim();
-  if (!VALID_NAME.test(username)) return res.status(400).json({ error: 'Username must be 3-24 chars: letters, numbers, _ or .' });
-  if (username.toLowerCase() === AI_USER.toLowerCase()) return res.status(400).json({ error: 'That name is reserved' });
-  if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
-  if (findUser(username)) return res.status(409).json({ error: 'Username already taken' });
+  if (!VALID_NAME.test(username)) return res.status(400).json({ error: 'Username must be 3-24 chars.' });
+  if (username.toLowerCase() === AI_USER.toLowerCase()) return res.status(400).json({ error: 'Name reserved' });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'Password too short' });
+  if (await findUser(username)) return res.status(409).json({ error: 'Username taken' });
+  
   const passHash = await bcrypt.hash(password, 10);
-  db.users[username] = { username, color: colorFor(username), passHash, credentials: [], createdAt: Date.now() };
-  persist();
-  const token = issueToken(username);
-  res.json({ token, user: publicUser(db.users[username]) });
+  const newUser = await User.create({ username, color: colorFor(username), passHash, credentials: [], createdAt: Date.now() });
+  res.json({ token: issueToken(newUser.username), user: publicUser(newUser) });
 });
 
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body || {};
-  const user = findUser(username);
-  if (!user || !user.passHash) return res.status(401).json({ error: 'Invalid username or password' });
+  const user = await findUser(username);
+  if (!user || !user.passHash) return res.status(401).json({ error: 'Invalid credentials' });
   const ok = await bcrypt.compare(String(password || ''), user.passHash);
-  if (!ok) return res.status(401).json({ error: 'Invalid username or password' });
+  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
   res.json({ token: issueToken(user.username), user: publicUser(user) });
 });
 
-app.get('/api/me', authREST, (req, res) => res.json({ user: publicUser(db.users[req.username]) }));
+app.get('/api/me', authREST, async (req, res) => {
+  const u = await User.findOne({ username: req.username });
+  res.json({ user: publicUser(u) });
+});
+
+app.post('/api/user/avatar', authREST, async (req, res) => {
+  await User.updateOne({ username: req.username }, { $set: { profilePic: req.body.url } });
+  res.json({ success: true, url: req.body.url });
+  // Broadcast contact update so others see the new picture
+  const allOnline = [...online.keys()];
+  for (const user of allOnline) {
+      io.to('user:' + user).emit('contacts', await contactsFor(user));
+  }
+});
 
 app.post('/api/webauthn/register/options', authREST, async (req, res) => {
-  const user = db.users[req.username];
+  const user = await User.findOne({ username: req.username });
   const { rpID } = rpFromReq(req);
   const options = await generateRegistrationOptions({
-    rpName: RP_NAME, rpID,
-    userName: user.username,
-    attestationType: 'none',
+    rpName: RP_NAME, rpID, userName: user.username, attestationType: 'none',
     authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
     excludeCredentials: (user.credentials || []).map(c => ({ id: c.id })),
   });
@@ -152,41 +167,31 @@ app.post('/api/webauthn/register/options', authREST, async (req, res) => {
 });
 
 app.post('/api/webauthn/register/verify', authREST, async (req, res) => {
-  const user = db.users[req.username];
+  const user = await User.findOne({ username: req.username });
   const { rpID, origin } = rpFromReq(req);
   try {
     const verification = await verifyRegistrationResponse({
-      response: req.body,
-      expectedChallenge: challenges.get(user.username),
-      expectedOrigin: origin, expectedRPID: rpID,
+      response: req.body, expectedChallenge: challenges.get(user.username), expectedOrigin: origin, expectedRPID: rpID,
     });
-    if (!verification.verified || !verification.registrationInfo) return res.status(400).json({ error: 'verification failed' });
+    if (!verification.verified || !verification.registrationInfo) return res.status(400).json({ error: 'failed' });
     const { credential } = verification.registrationInfo;
-    (user.credentials ||= []).push({
-      id: credential.id,
-      publicKey: Buffer.from(credential.publicKey).toString('base64'),
-      counter: credential.counter,
-    });
-    persist();
+    user.credentials.push({ id: credential.id, publicKey: Buffer.from(credential.publicKey).toString('base64'), counter: credential.counter });
+    await user.save();
     res.json({ verified: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.post('/api/webauthn/login/options', async (req, res) => {
-  const user = findUser(req.body?.username);
-  if (!user || !(user.credentials || []).length) return res.status(404).json({ error: 'No fingerprint registered for this user' });
+  const user = await findUser(req.body?.username);
+  if (!user || !(user.credentials || []).length) return res.status(404).json({ error: 'No fingerprint' });
   const { rpID } = rpFromReq(req);
-  const options = await generateAuthenticationOptions({
-    rpID,
-    allowCredentials: user.credentials.map(c => ({ id: c.id })),
-    userVerification: 'preferred',
-  });
+  const options = await generateAuthenticationOptions({ rpID, allowCredentials: user.credentials.map(c => ({ id: c.id })), userVerification: 'preferred' });
   challenges.set(user.username, options.challenge);
   res.json(options);
 });
 
 app.post('/api/webauthn/login/verify', async (req, res) => {
-  const user = findUser(req.body?.username);
+  const user = await findUser(req.body?.username);
   if (!user) return res.status(404).json({ error: 'unknown user' });
   const cred = (user.credentials || []).find(c => c.id === req.body.response?.id || c.id === req.body.id);
   const stored = cred || (user.credentials || [])[0];
@@ -194,109 +199,97 @@ app.post('/api/webauthn/login/verify', async (req, res) => {
   const { rpID, origin } = rpFromReq(req);
   try {
     const verification = await verifyAuthenticationResponse({
-      response: req.body.response || req.body,
-      expectedChallenge: challenges.get(user.username),
+      response: req.body.response || req.body, expectedChallenge: challenges.get(user.username),
       expectedOrigin: origin, expectedRPID: rpID,
-      credential: {
-        id: stored.id,
-        publicKey: new Uint8Array(Buffer.from(stored.publicKey, 'base64')),
-        counter: stored.counter,
-      },
+      credential: { id: stored.id, publicKey: new Uint8Array(Buffer.from(stored.publicKey, 'base64')), counter: stored.counter },
     });
     if (!verification.verified) return res.status(401).json({ error: 'fingerprint not verified' });
-    stored.counter = verification.authenticationInfo.newCounter;
-    persist();
+    await User.updateOne({ username: user.username, "credentials.id": stored.id }, { $set: { "credentials.$.counter": verification.authenticationInfo.newCounter } });
     res.json({ token: issueToken(user.username), user: publicUser(user) });
   } catch (e) { res.status(401).json({ error: e.message }); }
 });
 
-const online = new Map();   
-function isOnline(u) { return online.has(u) && online.get(u).size > 0; }
+// ===================== WEBSOCKETS =====================
+const online = new Map();
 function setOnline(u, sid, on) {
   if (on) { (online.get(u) || online.set(u, new Set()).get(u)).add(sid); }
   else { online.get(u)?.delete(sid); if (online.get(u)?.size === 0) online.delete(u); }
 }
-function broadcastPresence() {
-  io.emit('presence', { online: [...online.keys()] });
+function broadcastPresence() { io.emit('presence', { online: [...online.keys()] }); }
+
+async function contactsFor(username) {
+  const users = await User.find({ username: { $ne: username } }).lean();
+  const dms = users.map(u => ({ type: 'dm', id: dmId(username, u.username), username: u.username, color: u.color, profilePic: u.profilePic, bot: !!u.bot }));
+  const groups = await Group.find({ members: username }).lean();
+  const formattedGroups = groups.map(g => ({ type: 'group', id: g.id, name: g.name, color: g.color, members: g.members }));
+  return [...formattedGroups, ...dms];
 }
 
-function contactsFor(username) {
-  const dms = Object.values(db.users)
-    .filter(u => u.username !== username)
-    .map(u => ({ type: 'dm', id: dmId(username, u.username), username: u.username, color: u.color, bot: !!u.bot }));
-  const groups = Object.values(db.groups)
-    .filter(g => g.members.includes(username))
-    .map(g => ({ type: 'group', id: g.id, name: g.name, color: g.color, members: g.members }));
-  return [...groups, ...dms];
-}
-
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   const u = userFromToken(socket.handshake.auth?.token);
-  if (!u || !db.users[u]) return next(new Error('unauthorized'));
+  if (!u) return next(new Error('unauthorized'));
+  const user = await User.findOne({ username: u });
+  if (!user) return next(new Error('unauthorized'));
   socket.data.username = u;
+  socket.data.color = user.color;
   next();
 });
 
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
   const me = socket.data.username;
   socket.join('user:' + me);
   setOnline(me, socket.id, true);
-  socket.emit('ready', { me, color: db.users[me].color });
-  socket.emit('contacts', contactsFor(me));
+  socket.emit('ready', { me, color: socket.data.color });
+  socket.emit('contacts', await contactsFor(me));
   broadcastPresence();
 
-  socket.on('history', (conversationId, ack) => {
-    ack?.({ messages: db.messages[conversationId] || [] });
+  socket.on('history', async (conversationId, ack) => {
+    const messages = await Message.find({ conversationId }).sort({ ts: 1 }).limit(100).lean();
+    ack?.({ messages });
   });
 
-  socket.on('createGroup', ({ name, members }, ack) => {
+  socket.on('createGroup', async ({ name, members }, ack) => {
     if (!me) return;
-    const id = 'group:' + Math.abs(hashStr(name + Date.now())) .toString(36);
+    const id = 'group:' + Math.abs(hashStr(name + Date.now())).toString(36);
     const all = Array.from(new Set([me, ...(members || [])]));
-    db.groups[id] = { id, name: String(name).slice(0, 40) || 'Group', members: all, color: colorFor(id) };
-    persist();
-    all.forEach(u => io.to('user:' + u).emit('contacts', contactsFor(u)));
+    await Group.create({ id, name: String(name).slice(0, 40) || 'Group', members: all, color: colorFor(id) });
+    all.forEach(async u => io.to('user:' + u).emit('contacts', await contactsFor(u)));
     ack?.({ id });
   });
 
-  socket.on('typing', ({ conversationId, to, isGroup }) => {
+  socket.on('typing', async ({ conversationId, to, isGroup }) => {
     if (!me) return;
-    relay(conversationId, to, isGroup, 'typing', { conversationId, from: me });
+    await relay(conversationId, to, isGroup, 'typing', { conversationId, from: me });
   });
 
   socket.on('message', async (payload, ack) => {
     if (!me) return;
     const { conversationId, to, isGroup, type, content, meta } = payload;
+    const msgCount = await Message.countDocuments({ conversationId });
     const msg = {
-      id: 'm' + Math.abs(hashStr(me + content + (db.messages[conversationId]?.length || 0))) + Date.now().toString(36),
+      id: 'm' + Math.abs(hashStr(me + content + msgCount)) + Date.now().toString(36),
       conversationId, from: me, type: type || 'text', content, meta: meta || null,
       ts: Date.now(), status: 'sent'
     };
-    pushMessage(conversationId, msg);
+    
+    await Message.create(msg);
     ack?.({ msg });
-    relay(conversationId, to, isGroup, 'message', msg);
+    await relay(conversationId, to, isGroup, 'message', msg);
 
-    // Human-to-human real-time scene sync
     if (to !== AI_USER && !isGroup) {
       const sceneContext = keywordScene(content);
-      const sceneEvent = { 
-        environment: sceneContext.preset, 
-        mood: sceneContext.mood, 
-        actor: me, 
-        animation: 'talk' 
-      };
-      relay(conversationId, to, isGroup, 'scene_update', sceneEvent);
+      const userDoc = await User.findOne({username: me}).lean();
+      const sceneEvent = { environment: sceneContext.preset, mood: sceneContext.mood, actor: me, actorPic: userDoc?.profilePic, animation: 'talk' };
+      await relay(conversationId, to, isGroup, 'scene_update', sceneEvent);
       socket.emit('scene_update', sceneEvent); 
     }
 
-    if (!isGroup && to === AI_USER) {
-      handleAi(conversationId, me);
-    }
+    if (!isGroup && to === AI_USER) handleAi(conversationId, me);
   });
 
-  socket.on('read', ({ conversationId, to, isGroup }) => {
+  socket.on('read', async ({ conversationId, to, isGroup }) => {
     if (!me) return;
-    relay(conversationId, to, isGroup, 'read', { conversationId, by: me });
+    await relay(conversationId, to, isGroup, 'read', { conversationId, by: me });
   });
 
   ['call:offer', 'call:answer', 'call:ice', 'call:hangup', 'call:reject', 'call:ringing'].forEach(ev => {
@@ -310,9 +303,9 @@ io.on('connection', (socket) => {
     if (me) { setOnline(me, socket.id, false); broadcastPresence(); }
   });
 
-  function relay(conversationId, to, isGroup, event, data) {
+  async function relay(conversationId, to, isGroup, event, data) {
     if (isGroup) {
-      const g = db.groups[conversationId];
+      const g = await Group.findOne({ id: conversationId });
       g?.members.forEach(u => { if (u !== me) io.to('user:' + u).emit(event, data); });
     } else if (to) {
       io.to('user:' + to).emit(event, data);   
@@ -320,15 +313,12 @@ io.on('connection', (socket) => {
   }
 });
 
-// ===================== The AI Scene Director =====================
+// ===================== THE AI SCENE DIRECTOR =====================
 async function handleAi(conversationId, human) {
   try {
     io.to('user:' + human).emit('typing', { conversationId, from: AI_USER });
-    
-    const hist = (db.messages[conversationId] || [])
-      .filter(m => m.type === 'text')
-      .slice(-20)
-      .map(m => ({ role: m.from === AI_USER ? 'assistant' : 'user', content: m.content }));
+    const histDocs = await Message.find({ conversationId, type: 'text' }).sort({ts: 1}).limit(20).lean();
+    const hist = histDocs.map(m => ({ role: m.from === AI_USER ? 'assistant' : 'user', content: m.content }));
 
     const sysPrompt = {
       role: 'system',
@@ -341,44 +331,30 @@ async function handleAi(conversationId, human) {
     };
     
     const messages = [sysPrompt, ...hist];
-
     const aiResponseStr = await ollamaChat(messages, { json: true });
-    const aiResponse = safeJson(aiResponseStr, { 
-        reply: aiResponseStr || "(no response)", 
-        environment: "clouds", 
-        animation: "idle" 
-    });
+    const aiResponse = safeJson(aiResponseStr, { reply: aiResponseStr || "(no response)", environment: "clouds", animation: "idle" });
 
     const msg = {
-      id: 'm' + Date.now().toString(36), 
-      conversationId, 
-      from: AI_USER,
-      type: 'text', 
-      content: aiResponse.reply, 
-      meta: { environment: aiResponse.environment, animation: aiResponse.animation }, 
-      ts: Date.now(), 
-      status: 'sent'
+      id: 'm' + Date.now().toString(36), conversationId, from: AI_USER,
+      type: 'text', content: aiResponse.reply, 
+      meta: { environment: aiResponse.environment, animation: aiResponse.animation }, ts: Date.now(), status: 'sent'
     };
     
-    pushMessage(conversationId, msg);
+    await Message.create(msg);
     io.to('user:' + human).emit('message', msg);
     
-    // Broadcast the 3D scene update event to the frontend
+    const aiDoc = await User.findOne({username: AI_USER}).lean();
     io.to('user:' + human).emit('scene_update', {
-       environment: aiResponse.environment,
-       animation: aiResponse.animation,
-       actor: AI_USER
+       environment: aiResponse.environment, animation: aiResponse.animation, actor: AI_USER, actorPic: aiDoc?.profilePic
     });
-
   } catch (e) {
-    io.to('user:' + human).emit('message', {
-      id: 'e' + Date.now().toString(36), conversationId, from: AI_USER,
-      type: 'text', content: 'AI error: ' + e.message, ts: Date.now()
-    });
+    const errMsg = { id: 'e' + Date.now().toString(36), conversationId, from: AI_USER, type: 'text', content: 'AI error: ' + e.message, ts: Date.now() };
+    await Message.create(errMsg);
+    io.to('user:' + human).emit('message', errMsg);
   }
 }
 
-// ===================== AI Helpers & Recruiter =====================
+// ===================== AI HELPERS & RECRUITER =====================
 async function ollamaChat(messages, { json = false } = {}) {
   const r = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -395,26 +371,17 @@ function safeJson(txt, fallback) {
   return fallback;
 }
 function profileLine(p) {
-  return `Field: ${p.field}; Target role: ${p.role}; Target company: ${p.company || 'general'}; ` +
-         `Experience: ${p.experience || 'unspecified'}; Focus areas: ${p.focus || 'general'}.`;
+  return `Field: ${p.field}; Target role: ${p.role}; Target company: ${p.company || 'general'}; Experience: ${p.experience || 'unspecified'}; Focus areas: ${p.focus || 'general'}.`;
 }
 
 app.post('/api/interview/question', async (req, res) => {
   try {
     const { profile, history = [], index = 0, total = 5 } = req.body;
-    const sys = `You are a senior technical interviewer and recruiter conducting a REAL job interview.
-Candidate profile -> ${profileLine(profile)}
-Ask ONE interview question at a time, tailored to the role AND the specific company's known interview style and values.
-Progress naturally: start lighter, then go deeper (technical depth, behavioral, role-specific, company-specific).
-This is question ${index + 1} of ${total}. Do NOT repeat earlier questions. Keep it concise (1-3 sentences).
-Return JSON: {"question": "...", "rationale": "what this probes"}.`;
+    const sys = `You are a senior technical interviewer and recruiter conducting a REAL job interview. Candidate profile -> ${profileLine(profile)}\nAsk ONE interview question at a time. Progress naturally: start lighter, then go deeper. This is question ${index + 1} of ${total}. Return JSON: {"question": "...", "rationale": "what this probes"}.`;
     const msgs = [{ role: 'system', content: sys }];
-    history.forEach(h => {
-      msgs.push({ role: 'assistant', content: 'Q: ' + h.question });
-      if (h.answer) msgs.push({ role: 'user', content: 'A: ' + h.answer });
-    });
-    msgs.push({ role: 'user', content: index === 0 ? 'Begin the interview with your first question.' : 'Ask the next question.' });
-    const out = safeJson(await ollamaChat(msgs, { json: true }), { question: 'Tell me about a challenging project you worked on.', rationale: 'general' });
+    history.forEach(h => { msgs.push({ role: 'assistant', content: 'Q: ' + h.question }); if (h.answer) msgs.push({ role: 'user', content: 'A: ' + h.answer }); });
+    msgs.push({ role: 'user', content: index === 0 ? 'Begin the interview.' : 'Ask the next question.' });
+    const out = safeJson(await ollamaChat(msgs, { json: true }), { question: 'Tell me about a challenging project.', rationale: 'general' });
     res.json(out);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -422,47 +389,27 @@ Return JSON: {"question": "...", "rationale": "what this probes"}.`;
 app.post('/api/interview/evaluate', async (req, res) => {
   try {
     const { profile, transcript = [], metrics = {} } = req.body;
-    const sys = `You are an expert interview evaluator. Score this candidate STRICTLY and fairly.
-Candidate profile -> ${profileLine(profile)}
-Speaking metrics (from speech analysis): words/min=${metrics.wpm || 'n/a'}, filler words=${metrics.fillers ?? 'n/a'}, avg answer length=${metrics.avgWords || 'n/a'} words.
-Evaluate these parameters, each scored 0-100 with a one-line justification:
-- technical: correctness & depth for the role
-- communication: clarity & structure of answers
-- fluency: use the speaking metrics + answer quality (penalize many fillers / very low wpm)
-- roleFit: suitability for the target role
-- companyFit: alignment with the target company's values/bar
-- problemSolving: reasoning quality
-Return JSON exactly:
-{"scores":{"technical":n,"communication":n,"fluency":n,"roleFit":n,"companyFit":n,"problemSolving":n},
- "overall":n,"verdict":"Strong Hire|Hire|Lean Hire|No Hire",
- "strengths":["..."],"improvements":["..."],
- "perParameter":{"technical":"...","communication":"...","fluency":"...","roleFit":"...","companyFit":"...","problemSolving":"..."},
- "summary":"2-3 sentence overall summary"}`;
+    const sys = `You are an expert interview evaluator. Score this candidate STRICTLY. Candidate profile -> ${profileLine(profile)}\nSpeaking metrics: wpm=${metrics.wpm || 'n/a'}, fillers=${metrics.fillers ?? 'n/a'}, avg len=${metrics.avgWords || 'n/a'} words. Evaluate parameters (0-100): technical, communication, fluency, roleFit, companyFit, problemSolving.\nReturn JSON exactly: {"scores":{"technical":n,"communication":n,"fluency":n,"roleFit":n,"companyFit":n,"problemSolving":n},"overall":n,"verdict":"Hire|No Hire","strengths":["..."],"improvements":["..."],"perParameter":{...},"summary":"..."}`;
     const qa = transcript.map((t, i) => `Q${i + 1}: ${t.question}\nA${i + 1}: ${t.answer || '(no answer)'}`).join('\n\n');
-    const out = safeJson(
-      await ollamaChat([{ role: 'system', content: sys }, { role: 'user', content: qa || 'No answers given.' }], { json: true }),
-      null
-    );
+    const out = safeJson(await ollamaChat([{ role: 'system', content: sys }, { role: 'user', content: qa || 'No answers given.' }], { json: true }), null);
     if (!out) return res.status(500).json({ error: 'evaluation failed' });
     res.json(out);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 const DREAM_PRESETS = ['space', 'forest', 'rain-city', 'beach', 'snow', 'underwater', 'fire', 'clouds'];
-
 function keywordScene(text = '') {
   const t = text.toLowerCase();
   const has = (...w) => w.some(x => t.includes(x));
   let preset = 'clouds';
-  if (has('space', 'star', 'galaxy', 'moon', 'planet', 'universe', 'night', 'cosmos')) preset = 'space';
-  else if (has('forest', 'tree', 'jungle', 'nature', 'green', 'hike', 'woods')) preset = 'forest';
-  else if (has('rain', 'city', 'street', 'tokyo', 'neon', 'cyber', 'sad', 'lonely')) preset = 'rain-city';
-  else if (has('beach', 'ocean', 'sea', 'sand', 'sunset', 'holiday', 'wave')) preset = 'beach';
-  else if (has('snow', 'winter', 'cold', 'ice', 'frozen', 'christmas')) preset = 'snow';
-  else if (has('water', 'underwater', 'fish', 'dive', 'coral', 'deep')) preset = 'underwater';
-  else if (has('fire', 'angry', 'rage', 'burn', 'hot', 'volcano', 'lava')) preset = 'fire';
-  const moods = { space: 'dreamy', forest: 'calm', 'rain-city': 'melancholic', beach: 'happy',
-                  snow: 'serene', underwater: 'mysterious', fire: 'intense', clouds: 'peaceful' };
+  if (has('space', 'star', 'galaxy', 'moon', 'planet', 'universe')) preset = 'space';
+  else if (has('forest', 'tree', 'jungle', 'nature', 'green')) preset = 'forest';
+  else if (has('rain', 'city', 'street', 'tokyo', 'neon', 'cyber', 'sad')) preset = 'rain-city';
+  else if (has('beach', 'ocean', 'sea', 'sand', 'sunset')) preset = 'beach';
+  else if (has('snow', 'winter', 'cold', 'ice', 'frozen')) preset = 'snow';
+  else if (has('water', 'underwater', 'fish', 'dive', 'deep')) preset = 'underwater';
+  else if (has('fire', 'angry', 'rage', 'burn', 'hot')) preset = 'fire';
+  const moods = { space: 'dreamy', forest: 'calm', 'rain-city': 'melancholic', beach: 'happy', snow: 'serene', underwater: 'mysterious', fire: 'intense', clouds: 'peaceful' };
   return { preset, mood: moods[preset], caption: text.slice(0, 60) };
 }
 
@@ -470,18 +417,11 @@ app.post('/api/dream/scene', async (req, res) => {
   const { text = '' } = req.body || {};
   const fallback = keywordScene(text);
   try {
-    const sys = `You turn a chat message into a 3D dream scene. Pick the single best preset that matches the message's setting OR emotion.
-Allowed presets: ${DREAM_PRESETS.join(', ')}.
-Return JSON exactly: {"preset":"one-of-allowed","mood":"one word","caption":"<=8 word poetic line about the scene"}`;
-    const out = safeJson(
-      await ollamaChat([{ role: 'system', content: sys }, { role: 'user', content: text || 'a quiet moment' }], { json: true }),
-      fallback
-    );
+    const sys = `You turn a chat message into a 3D dream scene. Pick the single best preset that matches the message's setting OR emotion. Allowed presets: ${DREAM_PRESETS.join(', ')}. Return JSON exactly: {"preset":"one-of-allowed","mood":"one word","caption":"<=8 word poetic line about the scene"}`;
+    const out = safeJson(await ollamaChat([{ role: 'system', content: sys }, { role: 'user', content: text || 'a quiet moment' }], { json: true }), fallback);
     if (!DREAM_PRESETS.includes(out.preset)) out.preset = fallback.preset;
     res.json({ preset: out.preset, mood: out.mood || fallback.mood, caption: out.caption || fallback.caption });
-  } catch {
-    res.json(fallback); 
-  }
+  } catch { res.json(fallback); }
 });
 
 httpServer.listen(port, () => console.log(`Chat running at http://localhost:${port}`));

@@ -118,3 +118,48 @@
   };
   window.fx.initThemeBtn = applyToggleVisual;
 })();
+
+/* ---------- 3D Ambient Soundscapes ---------- */
+  let currentEnvSound = null;
+  
+  window.addEventListener('updateScene', (e) => {
+      // Don't play if user toggled sound off
+      if (window.fx && !window.fx.soundOn()) return;
+      
+      const env = e.detail.environment;
+      const a = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (a.state === 'suspended') a.resume();
+
+      // Smoothly fade out the old environment sound
+      if (currentEnvSound) {
+          currentEnvSound.gain.linearRampToValueAtTime(0, a.currentTime + 1);
+          const oldOsc = currentEnvSound.osc;
+          setTimeout(() => { try { oldOsc.stop(); } catch{} }, 1000);
+      }
+
+      // Create a new continuous environmental drone
+      const osc = a.createOscillator();
+      const gain = a.createGain();
+      gain.gain.setValueAtTime(0, a.currentTime);
+      gain.gain.linearRampToValueAtTime(0.04, a.currentTime + 2); // Gentle 2-second fade in
+      
+      osc.connect(gain);
+      gain.connect(a.destination);
+
+      // Different environments generate different frequencies & waveforms!
+      if (env === 'space' || env === 'underwater') { 
+          osc.type = 'sine'; osc.frequency.value = 50; // Deep hum
+      }
+      else if (env === 'fire' || env === 'rain-city') { 
+          osc.type = 'sawtooth'; osc.frequency.value = 35; // Gritty rumble
+      } 
+      else if (env === 'forest' || env === 'beach') { 
+          osc.type = 'triangle'; osc.frequency.value = 120; // Clearer tone
+      }
+      else { 
+          osc.type = 'sine'; osc.frequency.value = 200; // Peaceful
+      }
+
+      osc.start();
+      currentEnvSound = { osc, gain };
+  });

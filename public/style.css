@@ -381,17 +381,27 @@ emoji-picker {
 /* ===================== 3D Dream Scene Integration ===================== */
 
 /* 1. Lock the 3D canvas to the background */
+/* ===================== 3D Dream Scene Integration ===================== */
+
 #scene-container {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  /* FORCE it to sit on top of the old background but behind the chat */
-  z-index: 0 !important; 
-  pointer-events: none; 
+  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+  z-index: 0 !important; pointer-events: none; 
 }
 
+/* Hide the old 2D background canvas completely */
+#fx-bg { display: none !important; }
+
+.app, .login { background-color: transparent !important; }
+
+/* Transparent panels with NO BLUR */
+.sidebar, .chat, .login-card {
+  background-color: rgba(17, 27, 33, 0.6) !important; 
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Message bubbles with NO BLUR */
+.msg.in { background-color: rgba(32, 44, 51, 0.85) !important; }
+.msg.out { background-color: rgba(0, 92, 75, 0.85) !important; }
 /* Push the old background to the very back */
 #fx-bg {
   z-index: -2 !important;
@@ -403,19 +413,19 @@ emoji-picker {
 }
 
 /* 3. Apply a glassmorphism effect to the panels so the 3D world shows through */
+/* 3. Apply a glassmorphism effect to the panels so the 3D world shows through */
 .sidebar, .chat, .login-card {
   background-color: rgba(17, 27, 33, 0.6) !important; /* DivineChat panel color with opacity */
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  /* REMOVED THE BLUR HERE */
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 /* 4. Ensure message bubbles stay readable against the 3D background */
 .msg.in {
   background-color: rgba(32, 44, 51, 0.85) !important;
-  backdrop-filter: blur(4px);
+  /* REMOVED THE BLUR HERE */
 }
 .msg.out {
   background-color: rgba(0, 92, 75, 0.85) !important;
-  backdrop-filter: blur(4px);
+  /* REMOVED THE BLUR HERE */
 }

@@ -3,11 +3,11 @@ const $ = (id) => document.getElementById(id);
 const socket = io({ autoConnect: false });
 socket.on('connect_error', (err) => { if (err.message === 'unauthorized') logout(); });
 
-let me = null, myColor = '#888';
-let contacts = [];                 
-let active = null;                 
-const previews = {};               
-const unread = {};                 
+let me = null, myColor = '#888', myProfilePic = null;
+let contacts = [];                
+let active = null;                
+const previews = {};              
+const unread = {};                
 const onlineSet = new Set();
 
 const initial = (s) => (s || '?').trim().charAt(0).toUpperCase();
@@ -62,16 +62,11 @@ $('fp-login').onclick = async () => {
   if (!window.SimpleWebAuthnBrowser) return authErr('Fingerprint not supported in this browser.');
   authErr('');
   try {
-    const optRes = await fetch('/api/webauthn/login/options', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username })
-    });
+    const optRes = await fetch('/api/webauthn/login/options', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
     const options = await optRes.json();
     if (!optRes.ok) throw new Error(options.error || 'No fingerprint on file');
     const asseResp = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
-    const vRes = await fetch('/api/webauthn/login/verify', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, response: asseResp })
-    });
+    const vRes = await fetch('/api/webauthn/login/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, response: asseResp }) });
     const data = await vRes.json();
     if (!vRes.ok) throw new Error(data.error || 'Verification failed');
     onAuthed(data.token, data.user);
@@ -81,19 +76,16 @@ $('fp-login').onclick = async () => {
 function onAuthed(token, user) {
   localStorage.setItem('dc_token', token);
   localStorage.setItem('dc_name', user.username);
-  me = user.username; myColor = user.color;
+  me = user.username; myColor = user.color; myProfilePic = user.profilePic;
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
   $('me-name').textContent = me;
-  setAvatar($('me-avatar'), me, myColor);
+  setAvatar($('me-avatar'), me, myColor, myProfilePic);
   connectSocket(token);
   window.fx?.sound('success');
 }
 
-function connectSocket(token) {
-  socket.auth = { token };
-  socket.connect();
-}
+function connectSocket(token) { socket.auth = { token }; socket.connect(); }
 
 function logout() {
   localStorage.removeItem('dc_token');
@@ -112,12 +104,62 @@ function logout() {
   } catch { localStorage.removeItem('dc_token'); }
 })();
 
-function setAvatar(el, name, color, showDot = false, online = false) {
-  el.textContent = initial(name);
-  el.style.background = color || '#888';
+// Avatar Rendering System (Now supports Profile Photos!)
+function setAvatar(el, name, color, profilePic = null, showDot = false, online = false) {
+  if (profilePic) {
+    el.innerHTML = `<img src="${profilePic}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+    el.style.background = 'transparent';
+  } else {
+    el.textContent = initial(name);
+    el.style.background = color || '#888';
+  }
   el.querySelector('.dot')?.remove();
   if (showDot && online) { const d = document.createElement('span'); d.className = 'dot'; el.appendChild(d); }
 }
+
+// ==========================================
+// PROFILE PICTURE UPLOADER LOGIC
+// ==========================================
+const avatarInput = document.createElement('input');
+avatarInput.type = 'file'; avatarInput.accept = 'image/*'; avatarInput.style.display = 'none';
+document.body.appendChild(avatarInput);
+
+$('me-avatar').style.cursor = 'pointer';
+$('me-avatar').title = "Change Profile Picture";
+$('me-avatar').onclick = () => avatarInput.click();
+
+avatarInput.onchange = async () => {
+  const file = avatarInput.files[0];
+  if (!file) return;
+  
+  $('me-avatar').innerHTML = '⌛'; // Loading state
+  console.log("Starting upload for:", file.name);
+  
+  const url = await uploadFile(file);
+  
+  if (url) {
+    console.log("Upload successful, saving to database:", url);
+    const r = await fetch('/api/user/avatar', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Authorization': 'Bearer ' + localStorage.getItem('dc_token') 
+      },
+      body: JSON.stringify({ url })
+    });
+    
+    if (r.ok) {
+      myProfilePic = url;
+      setAvatar($('me-avatar'), me, myColor, myProfilePic);
+    } else {
+      const err = await r.json();
+      alert("Database Error: " + (err.error || "Failed to save to database"));
+      setAvatar($('me-avatar'), me, myColor, myProfilePic); // Revert UI
+    }
+  } else {
+    setAvatar($('me-avatar'), me, myColor, myProfilePic); // Revert UI
+  }
+};
 
 socket.on('contacts', (list) => { contacts = list; renderContacts(); });
 socket.on('presence', ({ online }) => {
@@ -142,7 +184,7 @@ function renderContacts() {
       const av = document.createElement('span');
       av.className = 'avatar';
       const isOn = c.type === 'dm' && (c.bot || onlineSet.has(c.username));
-      setAvatar(av, label, c.color, c.type === 'dm', isOn);
+      setAvatar(av, label, c.color, c.profilePic, c.type === 'dm', isOn);
       const pv = previews[c.id];
       const info = document.createElement('div');
       info.className = 'info';
@@ -163,7 +205,7 @@ function openChat(c) {
   $('room').classList.remove('hidden');
   $('app').classList.add('in-room');
   const label = c.type === 'dm' ? c.username : c.name;
-  setAvatar($('room-avatar'), label, c.color);
+  setAvatar($('room-avatar'), label, c.color, c.profilePic);
   $('room-name').textContent = label + (c.bot ? ' 🤖' : '');
   $('call-btn').style.display = (c.type === 'dm' && !c.bot) ? '' : 'none';
   const wipe = document.createElement('div'); wipe.className = 'wipe-fx';
@@ -172,8 +214,7 @@ function openChat(c) {
   renderContacts();
   $('messages').innerHTML = '';
   socket.emit('history', c.id, ({ messages }) => {
-    messages.forEach(addMessage);
-    scrollDown();
+    messages.forEach(addMessage); scrollDown();
     socket.emit('read', { conversationId: c.id, to: peerOf(c), isGroup: c.type === 'group' });
   });
 }
@@ -202,22 +243,17 @@ function addMessage(m) {
   div.innerHTML = body;
   $('messages').appendChild(div);
 }
-function colorOf(name) {
-  const c = contacts.find(x => x.username === name);
-  return c?.color || '#aaa';
-}
+
+function colorOf(name) { const c = contacts.find(x => x.username === name); return c?.color || '#aaa'; }
 function scrollDown() { const m = $('messages'); m.scrollTop = m.scrollHeight; }
 
 function rippleAt(el, e) {
-  const r = document.createElement('span');
-  r.className = 'ripple';
-  const rect = el.getBoundingClientRect();
-  const size = Math.max(rect.width, rect.height);
+  const r = document.createElement('span'); r.className = 'ripple';
+  const rect = el.getBoundingClientRect(); const size = Math.max(rect.width, rect.height);
   r.style.width = r.style.height = size + 'px';
   r.style.left = (e.clientX - rect.left - size / 2) + 'px';
   r.style.top = (e.clientY - rect.top - size / 2) + 'px';
-  el.appendChild(r);
-  setTimeout(() => r.remove(), 600);
+  el.appendChild(r); setTimeout(() => r.remove(), 600);
 }
 
 const input = $('input');
@@ -225,32 +261,23 @@ input.addEventListener('input', () => {
   input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px';
   if (active) socket.emit('typing', { conversationId: active.id, to: peerOf(active), isGroup: active.type==='group' });
 });
-input.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(); }
-});
+input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(); } });
 $('send-btn').onclick = sendText;
 
 function send(type, content, meta) {
   if (!active) return;
   socket.emit('message', {
-    conversationId: active.id, to: peerOf(active), isGroup: active.type === 'group',
-    type, content, meta
+    conversationId: active.id, to: peerOf(active), isGroup: active.type === 'group', type, content, meta
   }, ({ msg }) => { addMessage(msg); scrollDown(); bumpPreview(msg); window.fx?.sound('send'); });
 }
 function sendText() {
-  const t = input.value.trim();
-  if (!t) return;
+  const t = input.value.trim(); if (!t) return;
   input.value = ''; input.style.height = 'auto';
   send('text', t);
   $('emoji-picker').classList.add('hidden');
 }
-function bumpPreview(m) {
-  previews[m.conversationId] = { text: previewText(m), ts: m.ts };
-  renderContacts();
-}
-function previewText(m) {
-  return m.type === 'image' ? '📷 Photo' : m.type === 'audio' ? '🎤 Voice message' : m.content;
-}
+function bumpPreview(m) { previews[m.conversationId] = { text: previewText(m), ts: m.ts }; renderContacts(); }
+function previewText(m) { return m.type === 'image' ? '📷 Photo' : m.type === 'audio' ? '🎤 Voice message' : m.content; }
 
 socket.on('message', (m) => {
   bumpPreview(m);
@@ -266,32 +293,22 @@ socket.on('message', (m) => {
 });
 
 socket.on('read', ({ conversationId, by }) => {
-  if (active && conversationId === active.id) {
-    $('messages').querySelectorAll('.msg.out .tick').forEach(t => t.classList.add('read'));
-  }
+  if (active && conversationId === active.id) { $('messages').querySelectorAll('.msg.out .tick').forEach(t => t.classList.add('read')); }
 });
 
 /* ---------- 3D Dream Scene Listener ---------- */
 socket.on('scene_update', (data) => {
-  // 1. Dispatch custom browser event containing the 3D data.
   window.dispatchEvent(new CustomEvent('updateScene', { detail: data }));
-  
-  // 2. Add a subtle system message to the chat UI 
-  if (active) {
+  if (active && data.environment) {
     const sysMsg = document.createElement('div');
     sysMsg.className = 'msg sys-msg';
-    sysMsg.style.textAlign = 'center';
-    sysMsg.style.color = 'var(--text-muted, #aaa)';
-    sysMsg.style.fontSize = '0.85em';
-    sysMsg.style.margin = '10px 0';
-    sysMsg.style.fontStyle = 'italic';
-    sysMsg.style.alignSelf = 'center';
+    sysMsg.style.textAlign = 'center'; sysMsg.style.color = 'var(--text-muted, #aaa)';
+    sysMsg.style.fontSize = '0.85em'; sysMsg.style.margin = '10px 0';
+    sysMsg.style.fontStyle = 'italic'; sysMsg.style.alignSelf = 'center';
     
     const actorName = data.actor === 'AI Assistant' ? 'The AI' : data.actor;
     sysMsg.textContent = `🌌 ${actorName} shifted the environment to: ${data.environment}`;
-    
-    $('messages').appendChild(sysMsg);
-    scrollDown();
+    $('messages').appendChild(sysMsg); scrollDown();
   }
 });
 
@@ -302,29 +319,40 @@ socket.on('typing', ({ conversationId, from }) => {
     clearTimeout(typingTimers[conversationId]);
     typingTimers[conversationId] = setTimeout(() => hideTyping(conversationId), 2500);
   }
+  
+  // TRIGGER 3D TYPING ANIMATION DYNAMICALLY
+  const contact = contacts.find(c => c.username === from);
+  window.dispatchEvent(new CustomEvent('updateScene', {
+      detail: { actor: from, actorPic: contact?.profilePic, animation: 'typing' }
+  }));
 });
 function hideTyping(cid) { if (active && cid === active.id) $('typing-row').classList.add('hidden'); }
 
 $('emoji-btn').onclick = () => $('emoji-picker').classList.toggle('hidden');
-$('emoji-picker').addEventListener('emoji-click', e => {
-  input.value += e.detail.unicode; input.focus();
-});
+$('emoji-picker').addEventListener('emoji-click', e => { input.value += e.detail.unicode; input.focus(); });
 
 $('attach-btn').onclick = () => $('file-input').click();
 $('file-input').onchange = async () => {
-  const file = $('file-input').files[0];
-  if (!file) return;
-  const url = await uploadFile(file);
-  if (url) send('image', url);
+  const file = $('file-input').files[0]; if (!file) return;
+  const url = await uploadFile(file); if (url) send('image', url);
   $('file-input').value = '';
 };
+
+// ==========================================
+// CENTRAL UPLOAD FUNCTION WITH ALERTS
+// ==========================================
 async function uploadFile(file) {
   const fd = new FormData(); fd.append('file', file);
   try {
     const r = await fetch('/api/upload', { method: 'POST', body: fd });
-    const d = await r.json();
+    const d = await r.json(); 
+    if (!r.ok) throw new Error(d.error || 'Server rejected upload');
     return d.url;
-  } catch { alert('Upload failed'); return null; }
+  } catch (e) { 
+    alert('Upload failed completely: ' + e.message); 
+    console.error(e);
+    return null; 
+  }
 }
 
 let mediaRecorder = null, chunks = [], recording = false;
@@ -339,26 +367,18 @@ async function startRec() {
   if (recording || !active) return;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream);
-    chunks = [];
+    mediaRecorder = new MediaRecorder(stream); chunks = [];
     mediaRecorder.ondataavailable = e => chunks.push(e.data);
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
       const blob = new Blob(chunks, { type: 'audio/webm' });
       const file = new File([blob], 'voice.webm', { type: 'audio/webm' });
-      const url = await uploadFile(file);
-      if (url) send('audio', url);
+      const url = await uploadFile(file); if (url) send('audio', url);
     };
-    mediaRecorder.start();
-    recording = true;
-    mic.classList.add('mic-recording');
+    mediaRecorder.start(); recording = true; mic.classList.add('mic-recording');
   } catch { alert('Mic permission needed'); }
 }
-function stopRec() {
-  if (recording && mediaRecorder) {
-    mediaRecorder.stop(); recording = false; mic.classList.remove('mic-recording');
-  }
-}
+function stopRec() { if (recording && mediaRecorder) { mediaRecorder.stop(); recording = false; mic.classList.remove('mic-recording'); } }
 
 let pc = null, localStream = null, callPeer = null, callIncoming = null, muted = false;
 let callKind = 'audio', camOff = false;
@@ -372,19 +392,13 @@ $('call-mute').onclick = toggleMute;
 $('call-cam').onclick = toggleCam;
 
 async function getMedia(kind) {
-  localStream = await navigator.mediaDevices.getUserMedia(
-    kind === 'video' ? { audio: true, video: { facingMode: 'user' } } : { audio: true });
-  if (kind === 'video') $('local-video').srcObject = localStream;
-  return localStream;
+  localStream = await navigator.mediaDevices.getUserMedia(kind === 'video' ? { audio: true, video: { facingMode: 'user' } } : { audio: true });
+  if (kind === 'video') $('local-video').srcObject = localStream; return localStream;
 }
 function newPeer(peer) {
-  callPeer = peer;
-  pc = new RTCPeerConnection(ICE);
+  callPeer = peer; pc = new RTCPeerConnection(ICE);
   pc.onicecandidate = e => { if (e.candidate) socket.emit('call:ice', { to: peer, candidate: e.candidate }); };
-  pc.ontrack = e => {
-    $('remote-audio').srcObject = e.streams[0];
-    $('remote-video').srcObject = e.streams[0];
-  };
+  pc.ontrack = e => { $('remote-audio').srcObject = e.streams[0]; $('remote-video').srcObject = e.streams[0]; };
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'connected') $('call-state').textContent = 'Connected';
     if (['disconnected','failed','closed'].includes(pc.connectionState)) endCall(true);
@@ -393,95 +407,61 @@ function newPeer(peer) {
 }
 function showCall(name, state, { accept = false } = {}) {
   const video = callKind === 'video';
-  $('call').classList.remove('hidden');
-  $('call').classList.toggle('video', video);
-  $('call-video').classList.toggle('hidden', !video);
-  setAvatar($('call-avatar'), name, colorOf(name) || '#00a884');
-  $('call-name').textContent = name + (video ? ' · Video' : '');
-  $('call-state').textContent = state;
-  $('call-accept').classList.toggle('hidden', !accept);
-  $('call-mute').classList.toggle('hidden', accept);
-  $('call-cam').classList.toggle('hidden', accept || !video);
+  $('call').classList.remove('hidden'); $('call').classList.toggle('video', video); $('call-video').classList.toggle('hidden', !video);
+  setAvatar($('call-avatar'), name, colorOf(name) || '#00a884', contacts.find(c => c.username === name)?.profilePic);
+  $('call-name').textContent = name + (video ? ' · Video' : ''); $('call-state').textContent = state;
+  $('call-accept').classList.toggle('hidden', !accept); $('call-mute').classList.toggle('hidden', accept); $('call-cam').classList.toggle('hidden', accept || !video);
 }
 
 async function startCall(peer, kind = 'audio') {
   try {
-    callKind = kind;
-    await getMedia(kind);
-    newPeer(peer);
+    callKind = kind; await getMedia(kind); newPeer(peer);
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     showCall(peer, kind === 'video' ? 'Video calling…' : 'Calling…');
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
     socket.emit('call:offer', { to: peer, sdp: offer, kind });
   } catch (e) { alert('Could not start call: ' + e.message); endCall(true); }
 }
 
 socket.on('call:offer', async ({ from, sdp, kind }) => {
   if (pc) { socket.emit('call:reject', { to: from }); return; }   
-  callKind = kind === 'video' ? 'video' : 'audio';
-  callIncoming = { from, sdp };
+  callKind = kind === 'video' ? 'video' : 'audio'; callIncoming = { from, sdp };
   showCall(from, callKind === 'video' ? 'Incoming video call…' : 'Incoming call…', { accept: true });
-  window.fx?.sound('ring');
-  ringTimer = setInterval(() => window.fx?.sound('ring'), 2500);
+  window.fx?.sound('ring'); ringTimer = setInterval(() => window.fx?.sound('ring'), 2500);
 });
 let ringTimer = null;
 function stopRing() { clearInterval(ringTimer); ringTimer = null; }
 async function acceptCall() {
-  stopRing();
-  const { from, sdp } = callIncoming; callIncoming = null;
-  await getMedia(callKind);
-  newPeer(from);
+  stopRing(); const { from, sdp } = callIncoming; callIncoming = null;
+  await getMedia(callKind); newPeer(from);
   localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
   await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  socket.emit('call:answer', { to: from, sdp: answer });
-  showCall(from, 'Connecting…');
+  const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
+  socket.emit('call:answer', { to: from, sdp: answer }); showCall(from, 'Connecting…');
 }
-socket.on('call:answer', async ({ sdp }) => {
-  await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-});
-socket.on('call:ice', async ({ candidate }) => {
-  try { await pc?.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
-});
+socket.on('call:answer', async ({ sdp }) => { await pc.setRemoteDescription(new RTCSessionDescription(sdp)); });
+socket.on('call:ice', async ({ candidate }) => { try { await pc?.addIceCandidate(new RTCIceCandidate(candidate)); } catch {} });
 socket.on('call:reject', () => { $('call-state').textContent = 'Call declined'; setTimeout(() => endCall(true), 1200); });
 socket.on('call:hangup', () => endCall(true));
 
-function toggleMute() {
-  muted = !muted;
-  localStream?.getAudioTracks().forEach(t => t.enabled = !muted);
-  $('call-mute').textContent = muted ? 'Unmute' : 'Mute';
-}
-function toggleCam() {
-  camOff = !camOff;
-  localStream?.getVideoTracks().forEach(t => t.enabled = !camOff);
-  $('call-cam').textContent = camOff ? 'Camera On' : 'Camera Off';
-}
+function toggleMute() { muted = !muted; localStream?.getAudioTracks().forEach(t => t.enabled = !muted); $('call-mute').textContent = muted ? 'Unmute' : 'Mute'; }
+function toggleCam() { camOff = !camOff; localStream?.getVideoTracks().forEach(t => t.enabled = !camOff); $('call-cam').textContent = camOff ? 'Camera On' : 'Camera Off'; }
 function endCall(remote = false) {
-  stopRing();
-  if (!remote && callPeer) socket.emit('call:hangup', { to: callPeer });
-  pc?.close(); pc = null;
-  localStream?.getTracks().forEach(t => t.stop()); localStream = null;
+  stopRing(); if (!remote && callPeer) socket.emit('call:hangup', { to: callPeer });
+  pc?.close(); pc = null; localStream?.getTracks().forEach(t => t.stop()); localStream = null;
   callPeer = null; callIncoming = null; muted = false; camOff = false; callKind = 'audio';
   $('remote-video').srcObject = null; $('local-video').srcObject = null;
-  $('call').classList.add('hidden');
-  $('call').classList.remove('video');
-  $('call-video').classList.add('hidden');
-  $('call-mute').textContent = 'Mute';
-  $('call-cam').textContent = 'Camera Off';
+  $('call').classList.add('hidden'); $('call').classList.remove('video'); $('call-video').classList.add('hidden');
+  $('call-mute').textContent = 'Mute'; $('call-cam').textContent = 'Camera Off';
 }
 
 $('new-group-btn').onclick = () => {
-  const box = $('group-members');
-  box.innerHTML = '';
+  const box = $('group-members'); box.innerHTML = '';
   contacts.filter(c => c.type === 'dm' && !c.bot).forEach(c => {
-    const l = document.createElement('label');
-    l.innerHTML = `<input type="checkbox" value="${esc(c.username)}"> ${esc(c.username)}`;
+    const l = document.createElement('label'); l.innerHTML = `<input type="checkbox" value="${esc(c.username)}"> ${esc(c.username)}`;
     box.appendChild(l);
   });
-  $('group-name').value = '';
-  $('group-modal').classList.remove('hidden');
+  $('group-name').value = ''; $('group-modal').classList.remove('hidden');
 };
 $('group-cancel').onclick = () => $('group-modal').classList.add('hidden');
 $('group-create').onclick = () => {
@@ -502,8 +482,7 @@ $('fp-enroll').onclick = async () => {
     if (!optRes.ok) throw new Error(options.error || 'Failed');
     const attResp = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON: options });
     const vRes = await fetch('/api/webauthn/register/verify', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-      body: JSON.stringify(attResp)
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(attResp)
     });
     const data = await vRes.json();
     if (!vRes.ok || !data.verified) throw new Error(data.error || 'Verification failed');
@@ -513,7 +492,6 @@ $('fp-enroll').onclick = async () => {
 };
 
 const themeBtn = $('theme-btn'), soundBtn = $('sound-btn');
-window.fx?.initThemeBtn(themeBtn);
-themeBtn.onclick = () => window.fx?.toggleTheme(themeBtn);
+window.fx?.initThemeBtn(themeBtn); themeBtn.onclick = () => window.fx?.toggleTheme(themeBtn);
 soundBtn.textContent = window.fx?.soundOn() ? '🔊' : '🔇';
 soundBtn.onclick = () => { const on = window.fx?.toggleSound(); soundBtn.textContent = on ? '🔊' : '🔇'; if (on) window.fx?.sound('click'); };
