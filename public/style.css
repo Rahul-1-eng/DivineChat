@@ -377,3 +377,45 @@ emoji-picker {
   .iv-live-grid { flex-direction: column; }
   .iv-metrics, .iv-two { grid-template-columns: 1fr; }
 }
+
+/* ===================== 3D Dream Scene Integration ===================== */
+
+/* 1. Lock the 3D canvas to the background */
+#scene-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  /* FORCE it to sit on top of the old background but behind the chat */
+  z-index: 0 !important; 
+  pointer-events: none; 
+}
+
+/* Push the old background to the very back */
+#fx-bg {
+  z-index: -2 !important;
+}
+
+/* 2. Make the main app layers transparent */
+.app, .login {
+  background-color: transparent !important;
+}
+
+/* 3. Apply a glassmorphism effect to the panels so the 3D world shows through */
+.sidebar, .chat, .login-card {
+  background-color: rgba(17, 27, 33, 0.6) !important; /* DivineChat panel color with opacity */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* 4. Ensure message bubbles stay readable against the 3D background */
+.msg.in {
+  background-color: rgba(32, 44, 51, 0.85) !important;
+  backdrop-filter: blur(4px);
+}
+.msg.out {
+  background-color: rgba(0, 92, 75, 0.85) !important;
+  backdrop-filter: blur(4px);
+}

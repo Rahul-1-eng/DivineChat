@@ -4,18 +4,17 @@ const socket = io({ autoConnect: false });
 socket.on('connect_error', (err) => { if (err.message === 'unauthorized') logout(); });
 
 let me = null, myColor = '#888';
-let contacts = [];                 // [{type,id,username/name,color,bot,members}]
-let active = null;                 // current contact object
-const previews = {};               // conversationId -> {text, ts}
-const unread = {};                 // conversationId -> count
+let contacts = [];                 
+let active = null;                 
+const previews = {};               
+const unread = {};                 
 const onlineSet = new Set();
 
 const initial = (s) => (s || '?').trim().charAt(0).toUpperCase();
 const esc = (s) => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmtTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-/* ===================== Auth ===================== */
-let mode = 'login';                // 'login' | 'register'
+let mode = 'login';                
 const authErr = (m) => { $('auth-error').textContent = m || ''; };
 
 function setMode(m) {
@@ -57,7 +56,6 @@ async function submitAuth() {
   finally { $('auth-submit').disabled = false; }
 }
 
-/* ---- fingerprint login ---- */
 $('fp-login').onclick = async () => {
   const username = $('auth-name').value.trim();
   if (!username) return authErr('Enter your username first, then use fingerprint.');
@@ -103,7 +101,6 @@ function logout() {
   location.reload();
 }
 
-// auto-login if we have a valid token
 (async function tryResume() {
   const token = localStorage.getItem('dc_token');
   if (!token) return;
@@ -122,7 +119,6 @@ function setAvatar(el, name, color, showDot = false, online = false) {
   if (showDot && online) { const d = document.createElement('span'); d.className = 'dot'; el.appendChild(d); }
 }
 
-/* ---------- Contacts ---------- */
 socket.on('contacts', (list) => { contacts = list; renderContacts(); });
 socket.on('presence', ({ online }) => {
   onlineSet.clear(); online.forEach(u => onlineSet.add(u));
@@ -160,7 +156,6 @@ function renderContacts() {
     });
 }
 
-/* ---------- Open a chat ---------- */
 function openChat(c) {
   active = c;
   unread[c.id] = 0;
@@ -192,7 +187,6 @@ function updateRoomStatus() {
   $('room-status').textContent = onlineSet.has(active.username) ? 'online' : 'offline';
 }
 
-/* ---------- Render a message ---------- */
 function addMessage(m) {
   const mine = m.from === me;
   const div = document.createElement('div');
@@ -226,7 +220,6 @@ function rippleAt(el, e) {
   setTimeout(() => r.remove(), 600);
 }
 
-/* ---------- Sending ---------- */
 const input = $('input');
 input.addEventListener('input', () => {
   input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px';
@@ -259,7 +252,6 @@ function previewText(m) {
   return m.type === 'image' ? '📷 Photo' : m.type === 'audio' ? '🎤 Voice message' : m.content;
 }
 
-/* ---------- Incoming ---------- */
 socket.on('message', (m) => {
   bumpPreview(m);
   if (m.from !== me) window.fx?.sound('receive');
@@ -272,9 +264,34 @@ socket.on('message', (m) => {
   }
   hideTyping(m.conversationId);
 });
+
 socket.on('read', ({ conversationId, by }) => {
   if (active && conversationId === active.id) {
     $('messages').querySelectorAll('.msg.out .tick').forEach(t => t.classList.add('read'));
+  }
+});
+
+/* ---------- 3D Dream Scene Listener ---------- */
+socket.on('scene_update', (data) => {
+  // 1. Dispatch custom browser event containing the 3D data.
+  window.dispatchEvent(new CustomEvent('updateScene', { detail: data }));
+  
+  // 2. Add a subtle system message to the chat UI 
+  if (active) {
+    const sysMsg = document.createElement('div');
+    sysMsg.className = 'msg sys-msg';
+    sysMsg.style.textAlign = 'center';
+    sysMsg.style.color = 'var(--text-muted, #aaa)';
+    sysMsg.style.fontSize = '0.85em';
+    sysMsg.style.margin = '10px 0';
+    sysMsg.style.fontStyle = 'italic';
+    sysMsg.style.alignSelf = 'center';
+    
+    const actorName = data.actor === 'AI Assistant' ? 'The AI' : data.actor;
+    sysMsg.textContent = `🌌 ${actorName} shifted the environment to: ${data.environment}`;
+    
+    $('messages').appendChild(sysMsg);
+    scrollDown();
   }
 });
 
@@ -288,13 +305,11 @@ socket.on('typing', ({ conversationId, from }) => {
 });
 function hideTyping(cid) { if (active && cid === active.id) $('typing-row').classList.add('hidden'); }
 
-/* ---------- Emoji ---------- */
 $('emoji-btn').onclick = () => $('emoji-picker').classList.toggle('hidden');
 $('emoji-picker').addEventListener('emoji-click', e => {
   input.value += e.detail.unicode; input.focus();
 });
 
-/* ---------- Image upload ---------- */
 $('attach-btn').onclick = () => $('file-input').click();
 $('file-input').onchange = async () => {
   const file = $('file-input').files[0];
@@ -312,7 +327,6 @@ async function uploadFile(file) {
   } catch { alert('Upload failed'); return null; }
 }
 
-/* ---------- Voice messages (record) ---------- */
 let mediaRecorder = null, chunks = [], recording = false;
 const mic = $('mic-btn');
 mic.addEventListener('mousedown', startRec);
@@ -346,7 +360,6 @@ function stopRec() {
   }
 }
 
-/* ===================== WebRTC voice calls ===================== */
 let pc = null, localStream = null, callPeer = null, callIncoming = null, muted = false;
 let callKind = 'audio', camOff = false;
 const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
@@ -405,7 +418,7 @@ async function startCall(peer, kind = 'audio') {
 }
 
 socket.on('call:offer', async ({ from, sdp, kind }) => {
-  if (pc) { socket.emit('call:reject', { to: from }); return; }   // busy
+  if (pc) { socket.emit('call:reject', { to: from }); return; }   
   callKind = kind === 'video' ? 'video' : 'audio';
   callIncoming = { from, sdp };
   showCall(from, callKind === 'video' ? 'Incoming video call…' : 'Incoming call…', { accept: true });
@@ -459,7 +472,6 @@ function endCall(remote = false) {
   $('call-cam').textContent = 'Camera Off';
 }
 
-/* ---------- Groups ---------- */
 $('new-group-btn').onclick = () => {
   const box = $('group-members');
   box.innerHTML = '';
@@ -479,7 +491,6 @@ $('group-create').onclick = () => {
   socket.emit('createGroup', { name, members }, () => $('group-modal').classList.add('hidden'));
 };
 
-/* ---------- Account: fingerprint enroll + logout ---------- */
 $('logout-btn').onclick = () => { if (confirm('Log out of DivineChat?')) logout(); };
 
 $('fp-enroll').onclick = async () => {
@@ -501,7 +512,6 @@ $('fp-enroll').onclick = async () => {
   } catch (e) { alert('Could not add fingerprint: ' + (e.message || e)); }
 };
 
-/* ---------- FX: theme + sound toggles ---------- */
 const themeBtn = $('theme-btn'), soundBtn = $('sound-btn');
 window.fx?.initThemeBtn(themeBtn);
 themeBtn.onclick = () => window.fx?.toggleTheme(themeBtn);

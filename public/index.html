@@ -8,15 +8,60 @@
   <link rel="stylesheet" href="animations.css">
   <link rel="stylesheet" href="fx.css">
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1/index.js"></script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <style>
+    /* Lock the 3D canvas to the very back */
+    #scene-container {
+      position: fixed !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      z-index: -1 !important; 
+      pointer-events: none !important; 
+    }
+
+    /* Force the main app layers to be transparent */
+    body, html, .app, .login {
+      background-color: transparent !important;
+    }
+
+    /* Apply a beautiful glass effect to the panels so the 3D world shows through */
+    .sidebar, .chat, .login-card {
+      background-color: rgba(17, 27, 33, 0.45) !important; /* Semi-transparent dark */
+      backdrop-filter: blur(8px) !important;
+      -webkit-backdrop-filter: blur(8px) !important;
+      border: 1px solid rgba(255, 255, 255, 0.05) !important;
+    }
+
+    /* Ensure message bubbles stay readable */
+    .msg.in {
+      background-color: rgba(32, 44, 51, 0.85) !important;
+      backdrop-filter: blur(4px) !important;
+    }
+    .msg.out {
+      background-color: rgba(0, 92, 75, 0.85) !important;
+      backdrop-filter: blur(4px) !important;
+    }
+  </style>
 </head>
 <body data-theme="dark">
   <canvas id="fx-bg"></canvas>
 
-  <!-- ===== Login / Register ===== -->
+  <div id="scene-container"></div>
+
   <div id="login" class="login">
     <div class="login-card">
       <div class="logo">💬</div>
-      <h1>DivineChat</h1>
+      <h1>Rahul's 3D Chat</h1>
       <div class="auth-tabs">
         <button id="tab-login" class="auth-tab active">Log in</button>
         <button id="tab-register" class="auth-tab">Sign up</button>
@@ -30,9 +75,7 @@
     </div>
   </div>
 
-  <!-- ===== App ===== -->
   <div id="app" class="app hidden">
-    <!-- Sidebar -->
     <aside class="sidebar">
       <header class="sidebar-head">
         <div class="me">
@@ -50,7 +93,6 @@
       <div id="contacts" class="contacts"></div>
     </aside>
 
-    <!-- Chat area -->
     <main class="chat">
       <div id="empty" class="empty">
         <div class="empty-logo">💬</div>
@@ -85,7 +127,6 @@
     </main>
   </div>
 
-  <!-- ===== Call overlay ===== -->
   <div id="call" class="call hidden">
     <div id="call-video" class="call-video hidden">
       <video id="remote-video" autoplay playsinline></video>
@@ -105,7 +146,6 @@
     <audio id="remote-audio" autoplay></audio>
   </div>
 
-  <!-- ===== New group modal ===== -->
   <div id="group-modal" class="modal hidden">
     <div class="modal-card">
       <h3>New group</h3>
@@ -118,9 +158,7 @@
     </div>
   </div>
 
-  <!-- ===== AI Interview Recruiter ===== -->
   <div id="interview" class="interview hidden">
-    <!-- Stage 1: intake -->
     <section id="iv-intake" class="iv-stage">
       <div class="iv-card">
         <button class="iv-close" data-close>✕</button>
@@ -157,7 +195,6 @@
       </div>
     </section>
 
-    <!-- Stage 2: live interview -->
     <section id="iv-live" class="iv-stage hidden">
       <div class="iv-live-grid">
         <div class="iv-video-wrap">
@@ -179,7 +216,6 @@
       </div>
     </section>
 
-    <!-- Stage 3: report -->
     <section id="iv-report" class="iv-stage hidden">
       <div class="iv-card wide">
         <button class="iv-close" data-close>✕</button>
@@ -195,5 +231,6 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="app.js"></script>
   <script src="interview.js"></script>
+  <script type="module" src="scene.js?v=3"></script>
 </body>
 </html>

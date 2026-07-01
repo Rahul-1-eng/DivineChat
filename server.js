@@ -17,7 +17,7 @@ dotenv.config();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
-app.set('trust proxy', true);   // honor X-Forwarded-* from the host's proxy (Render/Fly/Nginx)
+app.set('trust proxy', true);
 const httpServer = createServer(app);
 const io = new Server(httpServer, { maxHttpBufferSize: 1e7 });
 const port = process.env.PORT || 3000;
@@ -26,10 +26,6 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
 const AI_USER = 'AI Assistant';
 
-// WebAuthn (fingerprint) config.
-// RP_ID/ORIGIN are auto-derived from each request's domain so fingerprint login
-// works on any deployed domain with zero config. Set RP_ID/ORIGIN in .env only
-// if you need to force a specific value (e.g. behind an unusual proxy setup).
 const RP_NAME = 'DivineChat';
 function rpFromReq(req) {
   const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${port}`;
@@ -41,27 +37,24 @@ function rpFromReq(req) {
   };
 }
 
-// ---------- persistence (simple JSON db) ----------
 const DB_PATH = join(__dirname, 'db.json');
 const UPLOAD_DIR = join(__dirname, 'public', 'uploads');
 if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
 
 let db = { users: {}, messages: {}, groups: {} };
 if (existsSync(DB_PATH)) {
-  try { db = JSON.parse(readFileSync(DB_PATH, 'utf8')); } catch { /* keep default */ }
+  try { db = JSON.parse(readFileSync(DB_PATH, 'utf8')); } catch { }
 }
-// guarantee shape
 db.users ||= {};
-db.messages ||= {};   // conversationId -> [msg]
-db.groups ||= {};     // groupId -> { id, name, members: [usernames], avatar }
-// AI is always present as a contact
+db.messages ||= {};   
+db.groups ||= {};     
 db.users[AI_USER] ||= { username: AI_USER, color: '#10a37f', bot: true };
 
 let saveTimer = null;
 function persist() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    try { writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); } catch (e) { console.error('persist', e); }
+    try { writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); } catch (e) {}
   }, 200);
 }
 
@@ -78,7 +71,6 @@ function pushMessage(conversationId, msg) {
   persist();
 }
 
-// ---------- uploads ----------
 const storage = multer.diskStorage({
   destination: UPLOAD_DIR,
   filename: (req, file, cb) => {
@@ -97,12 +89,11 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   res.json({ url: '/uploads/' + req.file.filename, name: req.file.originalname, size: req.file.size });
 });
 
-// ==================== Authentication ====================
-const tokens = new Map();                    // token -> username
-const challenges = new Map();                // username -> current webauthn challenge
+const tokens = new Map();                    
+const challenges = new Map();                
 const VALID_NAME = /^[a-zA-Z0-9_.]{3,24}$/;
 
-function findUser(name) {                     // case-insensitive lookup
+function findUser(name) {                     
   const key = Object.keys(db.users).find(u => u.toLowerCase() === String(name).toLowerCase());
   return key ? db.users[key] : null;
 }
@@ -146,7 +137,6 @@ app.post('/api/login', async (req, res) => {
 
 app.get('/api/me', authREST, (req, res) => res.json({ user: publicUser(db.users[req.username]) }));
 
-// ---- WebAuthn: enroll a fingerprint (must be logged in) ----
 app.post('/api/webauthn/register/options', authREST, async (req, res) => {
   const user = db.users[req.username];
   const { rpID } = rpFromReq(req);
@@ -182,7 +172,6 @@ app.post('/api/webauthn/register/verify', authREST, async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// ---- WebAuthn: log in with fingerprint ----
 app.post('/api/webauthn/login/options', async (req, res) => {
   const user = findUser(req.body?.username);
   if (!user || !(user.credentials || []).length) return res.status(404).json({ error: 'No fingerprint registered for this user' });
@@ -221,8 +210,7 @@ app.post('/api/webauthn/login/verify', async (req, res) => {
   } catch (e) { res.status(401).json({ error: e.message }); }
 });
 
-// ---------- presence ----------
-const online = new Map();   // username -> Set(socketId)
+const online = new Map();   
 function isOnline(u) { return online.has(u) && online.get(u).size > 0; }
 function setOnline(u, sid, on) {
   if (on) { (online.get(u) || online.set(u, new Set()).get(u)).add(sid); }
@@ -232,7 +220,6 @@ function broadcastPresence() {
   io.emit('presence', { online: [...online.keys()] });
 }
 
-// contact list for a user: all known users (except self) + their groups
 function contactsFor(username) {
   const dms = Object.values(db.users)
     .filter(u => u.username !== username)
@@ -243,7 +230,6 @@ function contactsFor(username) {
   return [...groups, ...dms];
 }
 
-// Only authenticated sockets may connect
 io.use((socket, next) => {
   const u = userFromToken(socket.handshake.auth?.token);
   if (!u || !db.users[u]) return next(new Error('unauthorized'));
@@ -290,7 +276,19 @@ io.on('connection', (socket) => {
     ack?.({ msg });
     relay(conversationId, to, isGroup, 'message', msg);
 
-    // AI assistant auto-reply (text only)
+    // Human-to-human real-time scene sync
+    if (to !== AI_USER && !isGroup) {
+      const sceneContext = keywordScene(content);
+      const sceneEvent = { 
+        environment: sceneContext.preset, 
+        mood: sceneContext.mood, 
+        actor: me, 
+        animation: 'talk' 
+      };
+      relay(conversationId, to, isGroup, 'scene_update', sceneEvent);
+      socket.emit('scene_update', sceneEvent); 
+    }
+
     if (!isGroup && to === AI_USER) {
       handleAi(conversationId, me);
     }
@@ -301,7 +299,6 @@ io.on('connection', (socket) => {
     relay(conversationId, to, isGroup, 'read', { conversationId, by: me });
   });
 
-  // ---- WebRTC signaling (1:1 voice calls) ----
   ['call:offer', 'call:answer', 'call:ice', 'call:hangup', 'call:reject', 'call:ringing'].forEach(ev => {
     socket.on(ev, (data) => {
       if (!me || !data?.to) return;
@@ -318,31 +315,61 @@ io.on('connection', (socket) => {
       const g = db.groups[conversationId];
       g?.members.forEach(u => { if (u !== me) io.to('user:' + u).emit(event, data); });
     } else if (to) {
-      io.to('user:' + to).emit(event, data);   // peer
+      io.to('user:' + to).emit(event, data);   
     }
   }
 });
 
+// ===================== The AI Scene Director =====================
 async function handleAi(conversationId, human) {
   try {
     io.to('user:' + human).emit('typing', { conversationId, from: AI_USER });
+    
     const hist = (db.messages[conversationId] || [])
       .filter(m => m.type === 'text')
       .slice(-20)
       .map(m => ({ role: m.from === AI_USER ? 'assistant' : 'user', content: m.content }));
 
-    const r = await fetch(`${OLLAMA_URL}/api/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, messages: hist, stream: false })
-    });
-    const data = await r.json();
-    const text = data?.message?.content || '(no response)';
-    const msg = {
-      id: 'm' + Date.now().toString(36), conversationId, from: AI_USER,
-      type: 'text', content: text, ts: Date.now(), status: 'sent'
+    const sysPrompt = {
+      role: 'system',
+      content: `You are an AI chat assistant and a 3D Scene Director. 
+      Respond to the user naturally, but you MUST output your response in JSON format.
+      Included in the JSON should be your text reply, the environment setting, and your avatar's animation.
+      Allowed environments: ${DREAM_PRESETS.join(', ')}.
+      Allowed animations: idle, wave, nod, shake_head, laugh, think, point, talk.
+      Format EXACTLY as: {"reply": "your text here", "environment": "forest", "animation": "wave"}`
     };
+    
+    const messages = [sysPrompt, ...hist];
+
+    const aiResponseStr = await ollamaChat(messages, { json: true });
+    const aiResponse = safeJson(aiResponseStr, { 
+        reply: aiResponseStr || "(no response)", 
+        environment: "clouds", 
+        animation: "idle" 
+    });
+
+    const msg = {
+      id: 'm' + Date.now().toString(36), 
+      conversationId, 
+      from: AI_USER,
+      type: 'text', 
+      content: aiResponse.reply, 
+      meta: { environment: aiResponse.environment, animation: aiResponse.animation }, 
+      ts: Date.now(), 
+      status: 'sent'
+    };
+    
     pushMessage(conversationId, msg);
     io.to('user:' + human).emit('message', msg);
+    
+    // Broadcast the 3D scene update event to the frontend
+    io.to('user:' + human).emit('scene_update', {
+       environment: aiResponse.environment,
+       animation: aiResponse.animation,
+       actor: AI_USER
+    });
+
   } catch (e) {
     io.to('user:' + human).emit('message', {
       id: 'e' + Date.now().toString(36), conversationId, from: AI_USER,
@@ -351,7 +378,7 @@ async function handleAi(conversationId, human) {
   }
 }
 
-// ===================== AI Interview Recruiter =====================
+// ===================== AI Helpers & Recruiter =====================
 async function ollamaChat(messages, { json = false } = {}) {
   const r = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -372,7 +399,6 @@ function profileLine(p) {
          `Experience: ${p.experience || 'unspecified'}; Focus areas: ${p.focus || 'general'}.`;
 }
 
-// Generate the next interview question (adaptive, role + company specific)
 app.post('/api/interview/question', async (req, res) => {
   try {
     const { profile, history = [], index = 0, total = 5 } = req.body;
@@ -393,7 +419,6 @@ Return JSON: {"question": "...", "rationale": "what this probes"}.`;
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Evaluate the full interview across multiple parameters
 app.post('/api/interview/evaluate', async (req, res) => {
   try {
     const { profile, transcript = [], metrics = {} } = req.body;
@@ -421,6 +446,42 @@ Return JSON exactly:
     if (!out) return res.status(500).json({ error: 'evaluation failed' });
     res.json(out);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+const DREAM_PRESETS = ['space', 'forest', 'rain-city', 'beach', 'snow', 'underwater', 'fire', 'clouds'];
+
+function keywordScene(text = '') {
+  const t = text.toLowerCase();
+  const has = (...w) => w.some(x => t.includes(x));
+  let preset = 'clouds';
+  if (has('space', 'star', 'galaxy', 'moon', 'planet', 'universe', 'night', 'cosmos')) preset = 'space';
+  else if (has('forest', 'tree', 'jungle', 'nature', 'green', 'hike', 'woods')) preset = 'forest';
+  else if (has('rain', 'city', 'street', 'tokyo', 'neon', 'cyber', 'sad', 'lonely')) preset = 'rain-city';
+  else if (has('beach', 'ocean', 'sea', 'sand', 'sunset', 'holiday', 'wave')) preset = 'beach';
+  else if (has('snow', 'winter', 'cold', 'ice', 'frozen', 'christmas')) preset = 'snow';
+  else if (has('water', 'underwater', 'fish', 'dive', 'coral', 'deep')) preset = 'underwater';
+  else if (has('fire', 'angry', 'rage', 'burn', 'hot', 'volcano', 'lava')) preset = 'fire';
+  const moods = { space: 'dreamy', forest: 'calm', 'rain-city': 'melancholic', beach: 'happy',
+                  snow: 'serene', underwater: 'mysterious', fire: 'intense', clouds: 'peaceful' };
+  return { preset, mood: moods[preset], caption: text.slice(0, 60) };
+}
+
+app.post('/api/dream/scene', async (req, res) => {
+  const { text = '' } = req.body || {};
+  const fallback = keywordScene(text);
+  try {
+    const sys = `You turn a chat message into a 3D dream scene. Pick the single best preset that matches the message's setting OR emotion.
+Allowed presets: ${DREAM_PRESETS.join(', ')}.
+Return JSON exactly: {"preset":"one-of-allowed","mood":"one word","caption":"<=8 word poetic line about the scene"}`;
+    const out = safeJson(
+      await ollamaChat([{ role: 'system', content: sys }, { role: 'user', content: text || 'a quiet moment' }], { json: true }),
+      fallback
+    );
+    if (!DREAM_PRESETS.includes(out.preset)) out.preset = fallback.preset;
+    res.json({ preset: out.preset, mood: out.mood || fallback.mood, caption: out.caption || fallback.caption });
+  } catch {
+    res.json(fallback); 
+  }
 });
 
 httpServer.listen(port, () => console.log(`Chat running at http://localhost:${port}`));
