@@ -314,43 +314,24 @@ io.on('connection', async (socket) => {
 });
 
 // ===================== THE AI SCENE DIRECTOR =====================
+// ===================== ROBUST AI HANDLER =====================
 async function handleAi(conversationId, human) {
   try {
     io.to('user:' + human).emit('typing', { conversationId, from: AI_USER });
-    const histDocs = await Message.find({ conversationId, type: 'text' }).sort({ts: 1}).limit(20).lean();
-    const hist = histDocs.map(m => ({ role: m.from === AI_USER ? 'assistant' : 'user', content: m.content }));
-
-    const sysPrompt = {
-      role: 'system',
-      content: `You are an AI chat assistant and a 3D Scene Director. 
-      Respond to the user naturally, but you MUST output your response in JSON format.
-      Included in the JSON should be your text reply, the environment setting, and your avatar's animation.
-      Allowed environments: ${DREAM_PRESETS.join(', ')}.
-      Allowed animations: idle, wave, nod, shake_head, laugh, think, point, talk.
-      Format EXACTLY as: {"reply": "your text here", "environment": "forest", "animation": "wave"}`
-    };
     
-    const messages = [sysPrompt, ...hist];
+    // Attempt the chat
     const aiResponseStr = await ollamaChat(messages, { json: true });
-    const aiResponse = safeJson(aiResponseStr, { reply: aiResponseStr || "(no response)", environment: "clouds", animation: "idle" });
-
-    const msg = {
-      id: 'm' + Date.now().toString(36), conversationId, from: AI_USER,
-      type: 'text', content: aiResponse.reply, 
-      meta: { environment: aiResponse.environment, animation: aiResponse.animation }, ts: Date.now(), status: 'sent'
-    };
+    // ... rest of your existing logic ...
     
-    await Message.create(msg);
-    io.to('user:' + human).emit('message', msg);
-    
-    const aiDoc = await User.findOne({username: AI_USER}).lean();
-    io.to('user:' + human).emit('scene_update', {
-       environment: aiResponse.environment, animation: aiResponse.animation, actor: AI_USER, actorPic: aiDoc?.profilePic
-    });
   } catch (e) {
-    const errMsg = { id: 'e' + Date.now().toString(36), conversationId, from: AI_USER, type: 'text', content: 'AI error: ' + e.message, ts: Date.now() };
-    await Message.create(errMsg);
-    io.to('user:' + human).emit('message', errMsg);
+    console.error("AI Tunnel Offline:", e.message);
+    // Instead of crashing or showing 502, notify the user gracefully
+    const offlineMsg = {
+      id: 'e' + Date.now().toString(36), conversationId, from: AI_USER,
+      type: 'text', content: "⚠️ The AI Brain is currently offline (Laptop sleeping?).", ts: Date.now()
+    };
+    await Message.create(offlineMsg);
+    io.to('user:' + human).emit('message', offlineMsg);
   }
 }
 

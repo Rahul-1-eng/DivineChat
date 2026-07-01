@@ -18,4 +18,4 @@ echo   stops the tunnel.
 echo ============================================================
 echo.
 
-cloudflared.exe tunnel --url http://localhost:11434 --http-host-header localhost
+cloudflared.exe tunnel --protocol http2 --url http://localhost:11434 --http-host-header localhost
